@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
+import { ADMIN_EMAILS } from "@/lib/constants";
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -92,6 +93,15 @@ export default function Navbar() {
                     </svg>
                     Account
                   </Link>
+                  {ADMIN_EMAILS.includes(user.email || '') && (
+                    <Link
+                      href="/admin"
+                      className={`nav-link ${pathname.startsWith("/admin") ? "active" : ""}`}
+                      style={{ color: "#c9a84c", fontWeight: 600 }}
+                    >
+                      Admin
+                    </Link>
+                  )}
                 ) : (
                   <Link
                     href="/auth/login"
@@ -168,7 +178,12 @@ export default function Navbar() {
         ))}
         {!loading && (
           user ? (
-            <Link href="/account">Account</Link>
+            <>
+              <Link href="/account">Account</Link>
+              {ADMIN_EMAILS.includes(user.email || '') && (
+                <Link href="/admin" style={{ color: "#c9a84c", fontWeight: 600 }}>Admin</Link>
+              )}
+            </>
           ) : (
             <Link href="/auth/login">Login</Link>
           )
