@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCart } from "@/contexts/CartContext";
 import { supabase } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
 import { isValidPhone, isValidPincode } from "@/lib/validation";
@@ -18,6 +19,16 @@ interface Profile {
   pincode: string;
 }
 
+interface OrderItem {
+  productId: number;
+  name: string;
+  price: number;
+  size: string;
+  quantity: number;
+  emoji?: string | null;
+  image?: string | null;
+}
+
 interface Order {
   id: number;
   order_number: string;
@@ -26,11 +37,19 @@ interface Order {
   payment_status: string;
   order_status: string;
   created_at: string;
+  items: OrderItem[];
+  shipping_address: string;
+  subtotal: number;
+  shipping: number;
+  tax: number;
 }
 
 interface FieldErrors {
   [key: string]: string;
 }
+
+const ORDER_FLOW = ["Placed", "Confirmed", "Shipped", "Delivered"];
+const STATUS_FILTERS = ["All", "Active", "Delivered", "Cancelled"];
 
 function formatPhoneDisplay(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 10);
@@ -38,8 +57,90 @@ function formatPhoneDisplay(value: string): string {
   return `${digits.slice(0, 5)} ${digits.slice(5)}`;
 }
 
+function OrderProgressBar({ status }: { status: string }) {
+  const isCancelled = status === "Cancelled";
+  const currentIdx = ORDER_FLOW.indexOf(status);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, padding: "8px 0" }}>
+      {ORDER_FLOW.map((step, idx) => {
+        const isCompleted = !isCancelled && idx < currentIdx;
+        const isCurrent = !isCancelled && idx === currentIdx;
+        const isLast = idx === ORDER_FLOW.length - 1;
+
+        let color = "#333";
+        if (isCompleted) color = "#22c55e";
+        else if (isCurrent) color = "#c9a84c";
+
+        return (
+          <div
+            key={step}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flex: isLast ? "none" : 1,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 50 }}>
+              <div
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: "50%",
+                  background: isCompleted || isCurrent ? color : "transparent",
+                  border: `2px solid ${isCompleted || isCurrent ? color : "#555"}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {isCompleted && (
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </div>
+              <span style={{ fontSize: "0.6rem", color: isCompleted ? "#22c55e" : isCurrent ? "#c9a84c" : "#555", marginTop: 3, fontWeight: 500, textAlign: "center" }}>
+                {step}
+              </span>
+            </div>
+            {!isLast && (
+              <div
+                style={{
+                  flex: 1,
+                  height: 2,
+                  background: isCompleted ? "#22c55e" : "#333",
+                  marginBottom: 16,
+                  minWidth: 8,
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+      {isCancelled && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 50, marginLeft: 8 }}>
+          <div
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#ef4444",
+              border: "2px solid #ef4444",
+            }}
+          />
+          <span style={{ fontSize: "0.6rem", color: "#ef4444", marginTop: 3, fontWeight: 500 }}>
+            Cancelled
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountContent() {
   const { user, signOut } = useAuth();
+  const { addToCart } = useCart();
   const router = useRouter();
   const [profile, setProfile] = useState<Profile>({
     full_name: "",
@@ -55,6 +156,8 @@ function AccountContent() {
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState("All");
 
   const validateField = useCallback((name: string, value: string) => {
     let error = "";
@@ -137,10 +240,10 @@ function AccountContent() {
       });
     }
 
-    // Fetch orders
+    // Fetch orders with items
     const { data: ordersData } = await supabase
       .from("orders")
-      .select("id, order_number, total, payment_method, payment_status, order_status, created_at")
+      .select("id, order_number, total, payment_method, payment_status, order_status, created_at, items, shipping_address, subtotal, shipping, tax")
       .eq("customer_id", user.id)
       .order("created_at", { ascending: false });
 
@@ -203,6 +306,21 @@ function AccountContent() {
     router.push("/");
   };
 
+  const handleReorder = (order: Order) => {
+    const items = order.items || [];
+    items.forEach((item) => {
+      addToCart({
+        productId: item.productId,
+        name: item.name,
+        price: item.price,
+        size: item.size || "Free Size",
+        emoji: item.emoji || null,
+        image: item.image || null,
+      });
+    });
+    router.push("/cart");
+  };
+
   const displayName =
     profile.full_name ||
     user?.user_metadata?.full_name ||
@@ -214,6 +332,14 @@ function AccountContent() {
     if (fieldErrors[name]) return { ...styles.input, borderColor: "#e74c3c" };
     return { ...styles.input, borderColor: "#2ecc71" };
   };
+
+  // Filter orders
+  const filteredOrders = orders.filter((o) => {
+    if (statusFilter === "All") return true;
+    if (statusFilter === "Active")
+      return ["Placed", "Confirmed", "Shipped"].includes(o.order_status);
+    return o.order_status === statusFilter;
+  });
 
   return (
     <div style={styles.container}>
@@ -347,7 +473,30 @@ function AccountContent() {
         {/* Orders Section */}
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>My Orders</h2>
-          {orders.length === 0 ? (
+
+          {/* Status filter */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setStatusFilter(f)}
+                style={{
+                  padding: "6px 14px",
+                  border: statusFilter === f ? "1px solid #c9a84c" : "1px solid #333",
+                  borderRadius: 20,
+                  background: statusFilter === f ? "rgba(201,168,76,0.15)" : "transparent",
+                  color: statusFilter === f ? "#c9a84c" : "#888",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: statusFilter === f ? 600 : 400,
+                }}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+
+          {filteredOrders.length === 0 ? (
             <div style={styles.emptyOrders}>
               <svg
                 width="48"
@@ -363,78 +512,238 @@ function AccountContent() {
                 <line x1="3" y1="6" x2="21" y2="6" />
                 <path d="M16 10a4 4 0 01-8 0" />
               </svg>
-              <p style={{ color: "#666", marginTop: 12 }}>No orders yet</p>
-              <p style={{ color: "#555", fontSize: 13 }}>
-                When you place an order, it will appear here.
+              <p style={{ color: "#666", marginTop: 12 }}>
+                {statusFilter === "All" ? "No orders yet. Start shopping!" : `No ${statusFilter.toLowerCase()} orders`}
               </p>
+              {statusFilter === "All" && (
+                <Link
+                  href="/shop"
+                  style={{
+                    display: "inline-block",
+                    marginTop: 8,
+                    color: "#c9a84c",
+                    textDecoration: "none",
+                    fontSize: 14,
+                    fontWeight: 500,
+                  }}
+                >
+                  Browse Collection →
+                </Link>
+              )}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {orders.map((order) => (
-                <Link
-                  key={order.id}
-                  href={`/order/${order.id}`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "14px 16px",
-                    background: "#1a1a1a",
-                    borderRadius: 10,
-                    border: "1px solid #222",
-                    textDecoration: "none",
-                    transition: "border-color 0.2s",
-                    flexWrap: "wrap",
-                    gap: 8,
-                  }}
-                >
-                  <div>
-                    <p style={{ color: "#c9a84c", fontWeight: 600, fontSize: 14, margin: 0 }}>
-                      {order.order_number}
-                    </p>
-                    <p style={{ color: "#888", fontSize: 12, margin: "4px 0 0" }}>
-                      {new Date(order.created_at).toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                  <div style={{ textAlign: "right" as const }}>
-                    <p style={{ color: "#ededed", fontWeight: 600, fontSize: 14, margin: 0 }}>
-                      {formatPrice(order.total)}
-                    </p>
-                    <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          padding: "2px 8px",
-                          borderRadius: 10,
-                          background:
-                            order.payment_status === "paid"
-                              ? "rgba(46,204,113,0.15)"
-                              : "rgba(243,156,18,0.15)",
-                          color: order.payment_status === "paid" ? "#2ecc71" : "#f39c12",
-                        }}
-                      >
-                        {order.payment_status === "paid" ? "Paid" : "COD"}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          padding: "2px 8px",
-                          borderRadius: 10,
-                          background: "rgba(201,168,76,0.15)",
-                          color: "#c9a84c",
-                          textTransform: "capitalize",
-                        }}
-                      >
-                        {order.order_status}
-                      </span>
+              {filteredOrders.map((order) => {
+                const isExpanded = expandedOrderId === order.id;
+                const items: OrderItem[] = Array.isArray(order.items) ? order.items : [];
+
+                return (
+                  <div key={order.id}>
+                    {/* Order card */}
+                    <div
+                      onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                      style={{
+                        padding: "14px 16px",
+                        background: "#1a1a1a",
+                        borderRadius: isExpanded ? "10px 10px 0 0" : 10,
+                        border: isExpanded ? "1px solid #c9a84c33" : "1px solid #222",
+                        borderBottom: isExpanded ? "none" : "1px solid #222",
+                        cursor: "pointer",
+                        transition: "border-color 0.2s",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+                        <div>
+                          <p style={{ color: "#c9a84c", fontWeight: 600, fontSize: 14, margin: 0 }}>
+                            {order.order_number}
+                          </p>
+                          <p style={{ color: "#888", fontSize: 12, margin: "4px 0 0" }}>
+                            {new Date(order.created_at).toLocaleDateString("en-IN", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                            {" | "}
+                            {items.length} item{items.length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: "right" as const }}>
+                          <p style={{ color: "#ededed", fontWeight: 600, fontSize: 14, margin: 0 }}>
+                            {formatPrice(order.total)}
+                          </p>
+                          <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", justifyContent: "flex-end" }}>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 8px",
+                                borderRadius: 10,
+                                background:
+                                  order.payment_status === "paid" || order.payment_status === "Paid"
+                                    ? "rgba(46,204,113,0.15)"
+                                    : "rgba(243,156,18,0.15)",
+                                color: order.payment_status === "paid" || order.payment_status === "Paid" ? "#2ecc71" : "#f39c12",
+                              }}
+                            >
+                              {order.payment_status === "paid" || order.payment_status === "Paid" ? "Paid" : "COD"}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                padding: "2px 8px",
+                                borderRadius: 10,
+                                background:
+                                  order.order_status === "Delivered"
+                                    ? "rgba(34,197,94,0.15)"
+                                    : order.order_status === "Cancelled"
+                                    ? "rgba(239,68,68,0.15)"
+                                    : "rgba(201,168,76,0.15)",
+                                color:
+                                  order.order_status === "Delivered"
+                                    ? "#22c55e"
+                                    : order.order_status === "Cancelled"
+                                    ? "#ef4444"
+                                    : "#c9a84c",
+                                textTransform: "capitalize",
+                              }}
+                            >
+                              {order.order_status}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Progress bar (always visible) */}
+                      <div style={{ marginTop: 8 }}>
+                        <OrderProgressBar status={order.order_status} />
+                      </div>
                     </div>
+
+                    {/* Expanded details */}
+                    {isExpanded && (
+                      <div
+                        style={{
+                          padding: "16px",
+                          background: "#151515",
+                          border: "1px solid #c9a84c33",
+                          borderTop: "1px solid #222",
+                          borderRadius: "0 0 10px 10px",
+                        }}
+                      >
+                        {/* Items */}
+                        <h4 style={{ color: "#ededed", fontSize: 13, margin: "0 0 8px", fontWeight: 600 }}>
+                          Items
+                        </h4>
+                        {items.map((item, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "6px 0",
+                              borderBottom: i < items.length - 1 ? "1px solid #1f1f1f" : "none",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 6,
+                                background: "#1a1a1a",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                overflow: "hidden",
+                                flexShrink: 0,
+                              }}
+                            >
+                              {item.image ? (
+                                <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              ) : (
+                                <span style={{ fontSize: 18 }}>{item.emoji || "👗"}</span>
+                              )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ color: "#ccc", fontSize: 13, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {item.name}
+                              </p>
+                              <p style={{ color: "#666", fontSize: 11, margin: "2px 0 0" }}>
+                                {item.size && `Size: ${item.size} | `}Qty: {item.quantity}
+                              </p>
+                            </div>
+                            <span style={{ color: "#c9a84c", fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
+                              {formatPrice(item.price * item.quantity)}
+                            </span>
+                          </div>
+                        ))}
+
+                        {/* Shipping address */}
+                        {order.shipping_address && (
+                          <div style={{ marginTop: 12 }}>
+                            <h4 style={{ color: "#ededed", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+                              Shipping Address
+                            </h4>
+                            <p style={{ color: "#888", fontSize: 12, margin: 0, lineHeight: 1.5 }}>
+                              {order.shipping_address}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Payment details */}
+                        <div style={{ marginTop: 12 }}>
+                          <h4 style={{ color: "#ededed", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+                            Payment
+                          </h4>
+                          <p style={{ color: "#888", fontSize: 12, margin: 0 }}>
+                            {order.payment_method === "cod" ? "Cash on Delivery" : "Online Payment"}
+                            {" - "}
+                            <span style={{ color: order.payment_status === "paid" || order.payment_status === "Paid" ? "#2ecc71" : "#f39c12" }}>
+                              {order.payment_status === "paid" || order.payment_status === "Paid" ? "Paid" : "Pending"}
+                            </span>
+                          </p>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReorder(order);
+                            }}
+                            style={{
+                              padding: "8px 16px",
+                              background: "linear-gradient(135deg, #c9a84c, #b8942e)",
+                              color: "#0a0a0a",
+                              border: "none",
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Reorder
+                          </button>
+                          <Link
+                            href={`/order/${order.id}`}
+                            style={{
+                              padding: "8px 16px",
+                              border: "1px solid #c9a84c",
+                              color: "#c9a84c",
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 500,
+                              textDecoration: "none",
+                              background: "transparent",
+                            }}
+                          >
+                            View Details
+                          </Link>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

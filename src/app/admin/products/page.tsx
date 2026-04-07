@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { downloadCSV } from "@/lib/csvExport";
+import ImageUpload from "@/components/ImageUpload";
 
 interface Product {
   id: string;
@@ -49,9 +51,12 @@ export default function AdminProducts() {
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [form, setForm] = useState<Omit<Product, "id">>(emptyProduct);
-  const [imageInput, setImageInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // Bulk operations state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -83,10 +88,14 @@ export default function AdminProducts() {
       .then(({ data }) => setCategories(data || []));
   }, []);
 
+  // Clear selection when page/search changes
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, search]);
+
   function openAdd() {
     setEditingProduct(null);
     setForm(emptyProduct);
-    setImageInput("");
     setShowModal(true);
   }
 
@@ -104,7 +113,6 @@ export default function AdminProducts() {
       images: p.images || [],
       is_active: p.is_active,
     });
-    setImageInput("");
     setShowModal(true);
   }
 
@@ -148,22 +156,73 @@ export default function AdminProducts() {
     fetchProducts();
   }
 
-  function addImageUrl() {
-    if (imageInput.trim()) {
-      setForm({ ...form, images: [...form.images, imageInput.trim()] });
-      setImageInput("");
-    }
-  }
-
-  function removeImage(idx: number) {
-    setForm({ ...form, images: form.images.filter((_, i) => i !== idx) });
-  }
-
   function toggleSize(size: string) {
     const sizes = form.sizes.includes(size)
       ? form.sizes.filter((s) => s !== size)
       : [...form.sizes, size];
     setForm({ ...form, sizes });
+  }
+
+  // Bulk operations
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === products.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map((p) => p.id)));
+    }
+  }
+
+  async function bulkDelete() {
+    const ids = Array.from(selectedIds);
+    const { error } = await supabase
+      .from("products")
+      .delete()
+      .in("id", ids);
+    if (error) {
+      alert("Error deleting: " + error.message);
+    } else {
+      setSelectedIds(new Set());
+      setBulkDeleteConfirm(false);
+      fetchProducts();
+    }
+  }
+
+  async function bulkSetActive(active: boolean) {
+    const ids = Array.from(selectedIds);
+    const { error } = await supabase
+      .from("products")
+      .update({ is_active: active })
+      .in("id", ids);
+    if (error) {
+      alert("Error updating: " + error.message);
+    } else {
+      setSelectedIds(new Set());
+      fetchProducts();
+    }
+  }
+
+  function handleExportCSV() {
+    const csvData = products.map((p) => ({
+      Name: p.name,
+      Category: p.category,
+      Price: p.price,
+      "Old Price": p.old_price || "",
+      Badge: p.badge || "",
+      Sizes: (p.sizes || []).join("; "),
+      Status: p.is_active ? "Active" : "Inactive",
+      Description: p.description || "",
+      Images: (p.images || []).join("; "),
+    }));
+    downloadCSV(csvData, "products");
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
@@ -189,6 +248,18 @@ export default function AdminProducts() {
     fontWeight: 500,
   };
 
+  const outlineBtnStyle: React.CSSProperties = {
+    padding: "0.5rem 1rem",
+    background: "transparent",
+    color: "#c9a84c",
+    border: "1px solid #c9a84c",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontSize: "0.8rem",
+    fontWeight: 500,
+    fontFamily: "'Poppins', sans-serif",
+  };
+
   return (
     <div>
       {/* Header */}
@@ -212,22 +283,27 @@ export default function AdminProducts() {
         >
           Products
         </h1>
-        <button
-          onClick={openAdd}
-          style={{
-            padding: "0.6rem 1.25rem",
-            background: "linear-gradient(135deg, #c9a84c, #d4b96a)",
-            color: "#000",
-            border: "none",
-            borderRadius: 8,
-            fontWeight: 600,
-            cursor: "pointer",
-            fontSize: "0.85rem",
-            fontFamily: "'Poppins', sans-serif",
-          }}
-        >
-          + Add Product
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleExportCSV} style={outlineBtnStyle}>
+            Export CSV
+          </button>
+          <button
+            onClick={openAdd}
+            style={{
+              padding: "0.6rem 1.25rem",
+              background: "linear-gradient(135deg, #c9a84c, #d4b96a)",
+              color: "#000",
+              border: "none",
+              borderRadius: 8,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontSize: "0.85rem",
+              fontFamily: "'Poppins', sans-serif",
+            }}
+          >
+            + Add Product
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -244,6 +320,112 @@ export default function AdminProducts() {
           onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
         />
       </div>
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div
+          style={{
+            background: "#1a1a1a",
+            border: "1px solid #c9a84c",
+            borderRadius: 10,
+            padding: "0.75rem 1rem",
+            marginBottom: "1rem",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ color: "#c9a84c", fontSize: "0.85rem", fontWeight: 600 }}>
+            {selectedIds.size} selected
+          </span>
+          <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+            <button
+              onClick={() => bulkSetActive(true)}
+              style={{
+                padding: "5px 12px",
+                background: "#22c55e22",
+                color: "#22c55e",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                fontFamily: "'Poppins', sans-serif",
+              }}
+            >
+              Set Active
+            </button>
+            <button
+              onClick={() => bulkSetActive(false)}
+              style={{
+                padding: "5px 12px",
+                background: "#eab30822",
+                color: "#eab308",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                fontFamily: "'Poppins', sans-serif",
+              }}
+            >
+              Set Inactive
+            </button>
+            {bulkDeleteConfirm ? (
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  onClick={bulkDelete}
+                  style={{
+                    padding: "5px 12px",
+                    background: "#ef4444",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    fontFamily: "'Poppins', sans-serif",
+                  }}
+                >
+                  Confirm Delete
+                </button>
+                <button
+                  onClick={() => setBulkDeleteConfirm(false)}
+                  style={{
+                    padding: "5px 12px",
+                    background: "#333",
+                    color: "#aaa",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    fontFamily: "'Poppins', sans-serif",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setBulkDeleteConfirm(true)}
+                style={{
+                  padding: "5px 12px",
+                  background: "#ef444422",
+                  color: "#ef4444",
+                  border: "none",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  fontFamily: "'Poppins', sans-serif",
+                }}
+              >
+                Delete Selected
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div
@@ -270,6 +452,14 @@ export default function AdminProducts() {
                   textAlign: "left",
                 }}
               >
+                <th style={{ padding: "0.75rem 0.5rem 0.75rem 1rem", fontWeight: 500, width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={products.length > 0 && selectedIds.size === products.length}
+                    onChange={toggleSelectAll}
+                    style={{ accentColor: "#c9a84c", width: 16, height: 16, cursor: "pointer" }}
+                  />
+                </th>
                 <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}></th>
                 <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
                   Name
@@ -294,13 +484,13 @@ export default function AdminProducts() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
+                  <td colSpan={8} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
                     Loading...
                   </td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
+                  <td colSpan={8} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
                     No products found
                   </td>
                 </tr>
@@ -311,14 +501,23 @@ export default function AdminProducts() {
                     style={{
                       borderBottom: "1px solid #1f1f1f",
                       transition: "background 0.15s",
+                      background: selectedIds.has(p.id) ? "#1e1e1e" : "transparent",
                     }}
                     onMouseOver={(e) =>
-                      (e.currentTarget.style.background = "#222")
+                      (e.currentTarget.style.background = selectedIds.has(p.id) ? "#252525" : "#222")
                     }
                     onMouseOut={(e) =>
-                      (e.currentTarget.style.background = "transparent")
+                      (e.currentTarget.style.background = selectedIds.has(p.id) ? "#1e1e1e" : "transparent")
                     }
                   >
+                    <td style={{ padding: "0.75rem 0.5rem 0.75rem 1rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleSelect(p.id)}
+                        style={{ accentColor: "#c9a84c", width: 16, height: 16, cursor: "pointer" }}
+                      />
+                    </td>
                     <td style={{ padding: "0.75rem 1rem" }}>
                       {p.emoji ? (
                         <span style={{ fontSize: "1.5rem" }}>{p.emoji}</span>
@@ -756,103 +955,13 @@ export default function AdminProducts() {
                 </div>
               </div>
 
-              {/* Images */}
+              {/* Images - Now using ImageUpload component */}
               <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>Images (URLs)</label>
-                <div
-                  style={{ display: "flex", gap: 8, marginBottom: 8 }}
-                >
-                  <input
-                    style={{ ...inputStyle, flex: 1 }}
-                    value={imageInput}
-                    onChange={(e) => setImageInput(e.target.value)}
-                    placeholder="https://example.com/image.jpg"
-                    onFocus={(e) =>
-                      (e.target.style.borderColor = "#c9a84c")
-                    }
-                    onBlur={(e) =>
-                      (e.target.style.borderColor = "#2a2a2a")
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addImageUrl();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={addImageUrl}
-                    style={{
-                      padding: "0 1rem",
-                      background: "#c9a84c",
-                      color: "#000",
-                      border: "none",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      fontSize: "0.85rem",
-                      fontFamily: "'Poppins', sans-serif",
-                    }}
-                  >
-                    Add
-                  </button>
-                </div>
-                {form.images.length > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                    }}
-                  >
-                    {form.images.map((url, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          position: "relative",
-                          width: 60,
-                          height: 60,
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          border: "1px solid #2a2a2a",
-                        }}
-                      >
-                        <img
-                          src={url}
-                          alt=""
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            objectFit: "cover",
-                          }}
-                        />
-                        <button
-                          onClick={() => removeImage(idx)}
-                          style={{
-                            position: "absolute",
-                            top: 2,
-                            right: 2,
-                            width: 18,
-                            height: 18,
-                            borderRadius: "50%",
-                            background: "#ef4444",
-                            color: "#fff",
-                            border: "none",
-                            cursor: "pointer",
-                            fontSize: "0.65rem",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            lineHeight: 1,
-                          }}
-                        >
-                          X
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <label style={labelStyle}>Images</label>
+                <ImageUpload
+                  images={form.images}
+                  onChange={(images) => setForm({ ...form, images })}
+                />
               </div>
             </div>
 

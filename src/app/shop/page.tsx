@@ -4,7 +4,20 @@ import ShopContent from "@/components/ShopContent";
 
 export const metadata: Metadata = {
   title: "Shop | Robins Luxe Threads",
-  description: "Browse our curated collection of luxury women's fashion. Filter by category, price, and size.",
+  description:
+    "Browse our curated collection of luxury women's fashion. Filter by category, price, and size.",
+  openGraph: {
+    title: "Shop | Robins Luxe Threads",
+    description:
+      "Browse our curated collection of luxury women's fashion. Filter by category, price, and size.",
+    url: "https://robinsluxethreads.vercel.app/shop",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Shop | Robins Luxe Threads",
+    description:
+      "Browse our curated collection of luxury women's fashion at Robins Luxe Threads.",
+  },
 };
 
 function ShopLoading() {

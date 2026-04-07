@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { downloadCSV } from "@/lib/csvExport";
 
 interface Subscriber {
   id: string;
@@ -37,22 +38,12 @@ export default function AdminSubscribers() {
   }
 
   function exportCSV() {
-    const header = "Email,Status,Subscribed Date\n";
-    const rows = subscribers
-      .map(
-        (s) =>
-          `${s.email},${s.is_active ? "Active" : "Inactive"},${new Date(
-            s.created_at
-          ).toLocaleDateString("en-IN")}`
-      )
-      .join("\n");
-    const blob = new Blob([header + rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `subscribers-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const csvData = subscribers.map((s) => ({
+      Email: s.email,
+      Status: s.is_active ? "Active" : "Inactive",
+      "Subscribed Date": new Date(s.created_at).toLocaleDateString("en-IN"),
+    }));
+    downloadCSV(csvData, "subscribers");
   }
 
   const activeCount = subscribers.filter((s) => s.is_active).length;

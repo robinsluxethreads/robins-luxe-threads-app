@@ -1,10 +1,31 @@
 export const dynamic = "force-dynamic";
 
+import type { Metadata } from "next";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { Product, Category } from "@/lib/utils";
 import ProductCard from "@/components/ProductCard";
 import NewsletterForm from "@/components/NewsletterForm";
+
+export const metadata: Metadata = {
+  title: "Robins Luxe Threads | Luxury Women's Fashion",
+  description:
+    "Discover curated luxury fashion that speaks to your elegance. Shop premium dresses, tops, bottoms, outerwear, and accessories at Robins Luxe Threads.",
+  openGraph: {
+    title: "Robins Luxe Threads | Luxury Women's Fashion",
+    description:
+      "Discover curated luxury fashion that speaks to your elegance. Every piece tells a story of craftsmanship and style.",
+    url: "https://robinsluxethreads.vercel.app",
+    siteName: "Robins Luxe Threads",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Robins Luxe Threads | Luxury Women's Fashion",
+    description:
+      "Discover curated luxury fashion that speaks to your elegance. Every piece tells a story of craftsmanship and style.",
+  },
+};
 
 async function getCategories(): Promise<Category[]> {
   const { data } = await supabase

@@ -5,6 +5,18 @@ export const metadata: Metadata = {
   title: "About Us | Robins Luxe Threads",
   description:
     "Learn about Robins Luxe Threads — our story, values, and commitment to luxury women's fashion.",
+  openGraph: {
+    title: "About Us | Robins Luxe Threads",
+    description:
+      "Learn about Robins Luxe Threads — our story, values, and commitment to luxury women's fashion.",
+    url: "https://robinsluxethreads.vercel.app/about",
+  },
+  twitter: {
+    card: "summary",
+    title: "About Us | Robins Luxe Threads",
+    description:
+      "Learn about Robins Luxe Threads — our story, values, and commitment to luxury women's fashion.",
+  },
 };
 
 const values = [

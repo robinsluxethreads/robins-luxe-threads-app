@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { downloadCSV } from "@/lib/csvExport";
 
 interface OrderItem {
   name: string;
@@ -28,6 +29,10 @@ interface Order {
   payment_id: string | null;
   order_status: string;
   created_at: string;
+  confirmed_at?: string | null;
+  shipped_at?: string | null;
+  delivered_at?: string | null;
+  cancelled_at?: string | null;
 }
 
 const STATUS_OPTIONS = [
@@ -53,6 +58,127 @@ const paymentColor: Record<string, string> = {
   Pending: "#eab308",
   COD: "#f97316",
 };
+
+function OrderTimeline({ order }: { order: Order }) {
+  const isCancelled = order.order_status === "Cancelled";
+  const currentIdx = ORDER_FLOW.indexOf(order.order_status);
+
+  const steps = isCancelled
+    ? [...ORDER_FLOW, "Cancelled"]
+    : ORDER_FLOW;
+
+  const getStepDate = (step: string): string | null => {
+    switch (step) {
+      case "Placed":
+        return order.created_at;
+      case "Confirmed":
+        return order.confirmed_at || null;
+      case "Shipped":
+        return order.shipped_at || null;
+      case "Delivered":
+        return order.delivered_at || null;
+      case "Cancelled":
+        return order.cancelled_at || null;
+      default:
+        return null;
+    }
+  };
+
+  const getStepStatus = (step: string, idx: number) => {
+    if (isCancelled && step === "Cancelled") return "cancelled";
+    if (isCancelled && idx > 0) return "pending";
+    if (idx < currentIdx) return "completed";
+    if (idx === currentIdx) return "current";
+    return "pending";
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 0, padding: "8px 0" }}>
+      {steps.map((step, idx) => {
+        const status = getStepStatus(step, idx);
+        const date = getStepDate(step);
+        const isLast = idx === steps.length - 1;
+
+        let circleColor = "#333";
+        let circleBorder = "#555";
+        let textColor = "#555";
+
+        if (status === "completed") {
+          circleColor = "#22c55e";
+          circleBorder = "#22c55e";
+          textColor = "#22c55e";
+        } else if (status === "current") {
+          circleColor = "#c9a84c";
+          circleBorder = "#c9a84c";
+          textColor = "#c9a84c";
+        } else if (status === "cancelled") {
+          circleColor = "#ef4444";
+          circleBorder = "#ef4444";
+          textColor = "#ef4444";
+        }
+
+        return (
+          <div
+            key={step}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flex: isLast ? "none" : 1,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 60 }}>
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  background: status === "pending" ? "transparent" : circleColor,
+                  border: `2px solid ${circleBorder}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {status === "completed" && (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </div>
+              <span style={{ fontSize: "0.65rem", color: textColor, marginTop: 4, fontWeight: 600, textAlign: "center" }}>
+                {step}
+              </span>
+              {date && (
+                <span style={{ fontSize: "0.55rem", color: "#666", marginTop: 2 }}>
+                  {new Date(date).toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "short",
+                  })}
+                </span>
+              )}
+            </div>
+            {!isLast && (
+              <div
+                style={{
+                  flex: 1,
+                  height: 2,
+                  background:
+                    status === "completed"
+                      ? "#22c55e"
+                      : status === "current"
+                      ? "linear-gradient(90deg, #c9a84c, #333)"
+                      : "#333",
+                  marginBottom: date ? 28 : 18,
+                  minWidth: 16,
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -98,6 +224,26 @@ export default function AdminOrders() {
     }
   }
 
+  function handleExportCSV() {
+    const csvData = orders.map((o) => ({
+      "Order #": o.order_number,
+      Date: new Date(o.created_at).toLocaleDateString("en-IN"),
+      Customer: o.customer_name,
+      Email: o.customer_email,
+      Phone: o.customer_phone,
+      Address: o.shipping_address,
+      Items: (o.items || []).map((item) => `${item.name} x${item.quantity}`).join("; "),
+      Subtotal: o.subtotal,
+      Shipping: o.shipping,
+      Tax: o.tax,
+      Total: o.total,
+      "Payment Method": o.payment_method,
+      "Payment Status": o.payment_status,
+      "Order Status": o.order_status,
+    }));
+    downloadCSV(csvData, "orders");
+  }
+
   const formatCurrency = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 0 });
 
@@ -112,18 +258,44 @@ export default function AdminOrders() {
     outline: "none",
   };
 
+  const outlineBtnStyle: React.CSSProperties = {
+    padding: "0.5rem 1rem",
+    background: "transparent",
+    color: "#c9a84c",
+    border: "1px solid #c9a84c",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontSize: "0.8rem",
+    fontWeight: 500,
+    fontFamily: "'Poppins', sans-serif",
+  };
+
   return (
     <div>
-      <h1
+      <div
         style={{
-          fontFamily: "'Playfair Display', serif",
-          fontSize: "1.75rem",
-          color: "#ededed",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
           marginBottom: "1.5rem",
+          flexWrap: "wrap",
+          gap: "1rem",
         }}
       >
-        Orders
-      </h1>
+        <h1
+          style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: "1.75rem",
+            color: "#ededed",
+            margin: 0,
+          }}
+        >
+          Orders
+        </h1>
+        <button onClick={handleExportCSV} style={outlineBtnStyle}>
+          Export CSV
+        </button>
+      </div>
 
       {/* Filters */}
       <div
@@ -221,8 +393,8 @@ export default function AdminOrders() {
                 </th>
               </tr>
             </thead>
-            <tbody>
-              {loading ? (
+            {loading ? (
+              <tbody>
                 <tr>
                   <td
                     colSpan={8}
@@ -235,7 +407,9 @@ export default function AdminOrders() {
                     Loading...
                   </td>
                 </tr>
-              ) : orders.length === 0 ? (
+              </tbody>
+            ) : orders.length === 0 ? (
+              <tbody>
                 <tr>
                   <td
                     colSpan={8}
@@ -248,11 +422,11 @@ export default function AdminOrders() {
                     No orders found
                   </td>
                 </tr>
-              ) : (
-                orders.map((order) => (
-                  <>
+              </tbody>
+            ) : (
+              orders.map((order) => (
+                <tbody key={order.id}>
                     <tr
-                      key={order.id}
                       onClick={() =>
                         setExpandedId(
                           expandedId === order.id ? null : order.id
@@ -379,7 +553,7 @@ export default function AdminOrders() {
 
                     {/* Expanded details */}
                     {expandedId === order.id && (
-                      <tr key={order.id + "-detail"}>
+                      <tr>
                         <td
                           colSpan={8}
                           style={{
@@ -388,6 +562,22 @@ export default function AdminOrders() {
                             borderBottom: "1px solid #2a2a2a",
                           }}
                         >
+                          {/* Order Timeline */}
+                          <div style={{ marginBottom: 16 }}>
+                            <h4
+                              style={{
+                                color: "#c9a84c",
+                                fontSize: "0.85rem",
+                                marginBottom: "0.5rem",
+                                fontFamily: "'Poppins', sans-serif",
+                                fontWeight: 600,
+                              }}
+                            >
+                              Order Progress
+                            </h4>
+                            <OrderTimeline order={order} />
+                          </div>
+
                           <div
                             style={{
                               display: "grid",
@@ -556,10 +746,9 @@ export default function AdminOrders() {
                         </td>
                       </tr>
                     )}
-                  </>
-                ))
-              )}
-            </tbody>
+                </tbody>
+              ))
+            )}
           </table>
         </div>
       </div>

@@ -35,9 +35,24 @@ export async function generateMetadata({ params }: PageProps) {
   if (!product) {
     return { title: "Product Not Found | Robins Luxe Threads" };
   }
+  const description =
+    product.description ||
+    `Shop ${product.name} at Robins Luxe Threads. ${formatPrice(product.price)}`;
+  const imageUrl = product.images?.[0] || undefined;
   return {
     title: `${product.name} | Robins Luxe Threads`,
-    description: product.description || `Shop ${product.name} at Robins Luxe Threads. ${formatPrice(product.price)}`,
+    description,
+    openGraph: {
+      title: `${product.name} | Robins Luxe Threads`,
+      description,
+      images: imageUrl ? [imageUrl] : undefined,
+      url: `https://robinsluxethreads.vercel.app/product/${id}`,
+    },
+    twitter: {
+      card: "summary_large_image" as const,
+      title: `${product.name} | Robins Luxe Threads`,
+      description,
+    },
   };
 }
 
@@ -51,5 +66,30 @@ export default async function ProductPage({ params }: PageProps) {
 
   const relatedProducts = await getRelatedProducts(product.category, product.id);
 
-  return <ProductDetail product={product} relatedProducts={relatedProducts} />;
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    description: product.description || `${product.name} - Luxury fashion from Robins Luxe Threads`,
+    image: product.images?.[0] || undefined,
+    category: product.category,
+    offers: {
+      "@type": "Offer",
+      price: product.price,
+      priceCurrency: "INR",
+      availability: product.is_active
+        ? "https://schema.org/InStock"
+        : "https://schema.org/OutOfStock",
+    },
+  };
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <ProductDetail product={product} relatedProducts={relatedProducts} />
+    </>
+  );
 }

@@ -21,6 +21,7 @@ interface Order {
   order_number: string;
   customer_name: string;
   customer_email: string;
+  customer_phone: string;
   shipping_address: string;
   items: OrderItem[];
   subtotal: number;
@@ -32,6 +33,137 @@ interface Order {
   payment_id: string | null;
   order_status: string;
   created_at: string;
+  confirmed_at?: string | null;
+  shipped_at?: string | null;
+  delivered_at?: string | null;
+  cancelled_at?: string | null;
+}
+
+const ORDER_FLOW = ["Placed", "Confirmed", "Shipped", "Delivered"];
+
+function OrderTimeline({ order }: { order: Order }) {
+  const isCancelled = order.order_status === "Cancelled";
+  const currentIdx = ORDER_FLOW.indexOf(order.order_status);
+
+  const steps = isCancelled ? [...ORDER_FLOW, "Cancelled"] : ORDER_FLOW;
+
+  const getStepDate = (step: string): string | null => {
+    switch (step) {
+      case "Placed":
+        return order.created_at;
+      case "Confirmed":
+        return order.confirmed_at || null;
+      case "Shipped":
+        return order.shipped_at || null;
+      case "Delivered":
+        return order.delivered_at || null;
+      case "Cancelled":
+        return order.cancelled_at || null;
+      default:
+        return null;
+    }
+  };
+
+  const getStepStatus = (step: string, idx: number) => {
+    if (isCancelled && step === "Cancelled") return "cancelled";
+    if (isCancelled && idx > 0) return "pending";
+    if (idx < currentIdx) return "completed";
+    if (idx === currentIdx) return "current";
+    return "pending";
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 0, padding: "12px 0" }}>
+      {steps.map((step, idx) => {
+        const status = getStepStatus(step, idx);
+        const date = getStepDate(step);
+        const isLast = idx === steps.length - 1;
+
+        let circleColor = "#333";
+        let circleBorder = "#555";
+        let textColor = "#555";
+
+        if (status === "completed") {
+          circleColor = "#22c55e";
+          circleBorder = "#22c55e";
+          textColor = "#22c55e";
+        } else if (status === "current") {
+          circleColor = "#c9a84c";
+          circleBorder = "#c9a84c";
+          textColor = "#c9a84c";
+        } else if (status === "cancelled") {
+          circleColor = "#ef4444";
+          circleBorder = "#ef4444";
+          textColor = "#ef4444";
+        }
+
+        return (
+          <div
+            key={step}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flex: isLast ? "none" : 1,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 64 }}>
+              <div
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: "50%",
+                  background: status === "pending" ? "transparent" : circleColor,
+                  border: `2px solid ${circleBorder}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {status === "completed" && (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+                {status === "cancelled" && (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                )}
+              </div>
+              <span style={{ fontSize: "0.7rem", color: textColor, marginTop: 6, fontWeight: 600, textAlign: "center" }}>
+                {step}
+              </span>
+              {date && (
+                <span style={{ fontSize: "0.6rem", color: "#666", marginTop: 2 }}>
+                  {new Date(date).toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "short",
+                  })}
+                </span>
+              )}
+            </div>
+            {!isLast && (
+              <div
+                style={{
+                  flex: 1,
+                  height: 2,
+                  background:
+                    status === "completed"
+                      ? "#22c55e"
+                      : status === "current"
+                      ? "linear-gradient(90deg, #c9a84c, #333)"
+                      : "#333",
+                  marginBottom: date ? 30 : 20,
+                  minWidth: 16,
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function OrderPage() {
@@ -104,6 +236,12 @@ export default function OrderPage() {
         </p>
       </div>
 
+      {/* Order Timeline */}
+      <div style={styles.section}>
+        <h2 style={styles.sectionTitle}>Order Progress</h2>
+        <OrderTimeline order={order} />
+      </div>
+
       <div style={styles.grid} className="order-grid">
         {/* Items */}
         <div style={styles.section}>
@@ -141,6 +279,12 @@ export default function OrderPage() {
               {order.shipping === 0 ? "FREE" : formatPrice(order.shipping)}
             </span>
           </div>
+          {order.tax > 0 && (
+            <div style={styles.totalRow}>
+              <span>Tax</span>
+              <span>{formatPrice(order.tax)}</span>
+            </div>
+          )}
           <div style={styles.divider} />
           <div style={{ ...styles.totalRow, fontWeight: 700, fontSize: 16 }}>
             <span>Total</span>
@@ -150,9 +294,9 @@ export default function OrderPage() {
 
         {/* Details */}
         <div>
-          {/* Payment Status */}
+          {/* Payment Card */}
           <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Payment</h2>
+            <h2 style={styles.sectionTitle}>Payment Details</h2>
             <div style={styles.detailRow}>
               <span style={{ color: "#888" }}>Method</span>
               <span style={{ color: "#ededed", textTransform: "capitalize" }}>
@@ -163,11 +307,11 @@ export default function OrderPage() {
               <span style={{ color: "#888" }}>Status</span>
               <span
                 style={{
-                  color: order.payment_status === "paid" ? "#2ecc71" : "#f39c12",
+                  color: order.payment_status === "paid" || order.payment_status === "Paid" ? "#2ecc71" : "#f39c12",
                   fontWeight: 600,
                 }}
               >
-                {order.payment_status === "paid"
+                {order.payment_status === "paid" || order.payment_status === "Paid"
                   ? "Paid"
                   : "COD - Pay on Delivery"}
               </span>
@@ -180,33 +324,43 @@ export default function OrderPage() {
             )}
           </div>
 
-          {/* Shipping Address */}
+          {/* Shipping Address Card */}
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>Shipping Address</h2>
             <p style={{ color: "#ededed", margin: 0, lineHeight: 1.6 }}>
               {order.customer_name}<br />
               {order.shipping_address}<br />
               {order.customer_email}
+              {order.customer_phone && (
+                <>
+                  <br />
+                  {order.customer_phone}
+                </>
+              )}
             </p>
           </div>
 
-          {/* Order Status */}
+          {/* Need Help Card */}
           <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Order Status</h2>
-            <div
+            <h2 style={styles.sectionTitle}>Need Help?</h2>
+            <p style={{ color: "#888", fontSize: 14, margin: "0 0 12px", lineHeight: 1.5 }}>
+              Have questions about your order? We are here to help.
+            </p>
+            <Link
+              href="/contact"
               style={{
                 display: "inline-block",
-                padding: "6px 16px",
-                borderRadius: 20,
-                background: "rgba(46, 204, 113, 0.15)",
-                color: "#2ecc71",
+                padding: "10px 20px",
+                border: "1px solid #c9a84c",
+                color: "#c9a84c",
+                borderRadius: 8,
                 fontSize: 14,
-                fontWeight: 600,
-                textTransform: "capitalize",
+                fontWeight: 500,
+                textDecoration: "none",
               }}
             >
-              {order.order_status}
-            </div>
+              Contact Us
+            </Link>
           </div>
         </div>
       </div>
