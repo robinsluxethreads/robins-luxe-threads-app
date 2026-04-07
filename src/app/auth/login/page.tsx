@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFormValidation } from "@/hooks/useFormValidation";
+import { isValidEmail } from "@/lib/validation";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,14 +15,93 @@ export default function LoginPage() {
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
 
+  const fieldConfig = useMemo(
+    () => ({
+      email: {
+        required: true,
+        custom: (val: string) =>
+          !isValidEmail(val.trim()) ? "Please enter a valid email address" : null,
+      },
+      password: {
+        required: true,
+        minLength: 6,
+        custom: (val: string) =>
+          val.length < 6 ? "Password must be at least 6 characters" : null,
+      },
+    }),
+    []
+  );
+
+  const { handleBlur, validateAll, getFieldState } =
+    useFormValidation(fieldConfig);
+
+  const getInputBorderColor = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (!state.isTouched) return "#333";
+    return state.valid ? "#2ecc71" : "#e74c3c";
+  };
+
+  const renderFieldError = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (state.isTouched && state.error) {
+      return (
+        <span style={{ color: "#e74c3c", fontSize: 12, marginTop: 2 }}>
+          {state.error}
+        </span>
+      );
+    }
+    return null;
+  };
+
+  const renderFieldIndicator = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (!state.isTouched) return null;
+    if (state.valid) {
+      return (
+        <span
+          style={{
+            position: "absolute",
+            right: 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "#2ecc71",
+            fontSize: 16,
+            fontWeight: 700,
+          }}
+        >
+          &#10003;
+        </span>
+      );
+    }
+    return null;
+  };
+
+  // Translate Supabase error messages
+  function translateError(message: string): string {
+    if (message.includes("Invalid login credentials")) {
+      return "Incorrect email or password. Please try again.";
+    }
+    if (message.includes("Email not confirmed")) {
+      return "Please verify your email before signing in. Check your inbox.";
+    }
+    if (message.includes("Too many requests")) {
+      return "Too many login attempts. Please wait a moment and try again.";
+    }
+    return message;
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    const isFormValid = validateAll({ email, password });
+    if (!isFormValid) return;
+
     setLoading(true);
 
     const { error } = await signIn(email, password);
     if (error) {
-      setError(error.message);
+      setError(translateError(error.message));
       setLoading(false);
     } else {
       router.push("/account");
@@ -31,7 +112,7 @@ export default function LoginPage() {
     setError("");
     const { error } = await signInWithGoogle();
     if (error) {
-      setError(error.message);
+      setError(translateError(error.message));
     }
   };
 
@@ -46,26 +127,44 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.field}>
             <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              placeholder="you@example.com"
-              style={styles.input}
-            />
+            <div style={{ position: "relative" as const }}>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => handleBlur("email", email)}
+                required
+                placeholder="you@example.com"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("email"),
+                  paddingRight: 40,
+                }}
+              />
+              {renderFieldIndicator("email")}
+            </div>
+            {renderFieldError("email")}
           </div>
 
           <div style={styles.field}>
             <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              placeholder="Your password"
-              style={styles.input}
-            />
+            <div style={{ position: "relative" as const }}>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onBlur={() => handleBlur("password", password)}
+                required
+                placeholder="Your password"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("password"),
+                  paddingRight: 40,
+                }}
+              />
+              {renderFieldIndicator("password")}
+            </div>
+            {renderFieldError("password")}
           </div>
 
           <div style={{ textAlign: "right", marginTop: "-8px" }}>
@@ -181,6 +280,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     outline: "none",
     transition: "border-color 0.2s",
+    width: "100%",
+    boxSizing: "border-box" as const,
   },
   primaryBtn: {
     padding: "14px",

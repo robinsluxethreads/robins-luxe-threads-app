@@ -7,6 +7,7 @@ import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
+import { isValidPhone, isValidPincode, isValidName } from "@/lib/validation";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 declare global {
@@ -24,6 +25,10 @@ interface ShippingForm {
   pincode: string;
 }
 
+interface FieldErrors {
+  [key: string]: string;
+}
+
 function CheckoutContent() {
   const router = useRouter();
   const { items, getCartTotal, clearCart } = useCart();
@@ -39,10 +44,60 @@ function CheckoutContent() {
     state: "",
     pincode: "",
   });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const subtotal = getCartTotal();
   const shipping = subtotal >= 5000 ? 0 : 99;
   const total = subtotal + shipping;
+
+  const validateField = useCallback((name: string, value: string): string => {
+    switch (name) {
+      case "fullName":
+        if (!value.trim()) return "Full name is required";
+        if (!isValidName(value)) return "Enter a valid name (min 2 chars, no numbers)";
+        return "";
+      case "phone":
+        if (!value.trim()) return "Phone number is required";
+        if (!isValidPhone(value)) return "Enter a valid 10-digit phone number";
+        return "";
+      case "address":
+        if (!value.trim()) return "Address is required";
+        if (value.trim().length < 10) return "Address must be at least 10 characters";
+        return "";
+      case "city":
+        if (!value.trim()) return "City is required";
+        return "";
+      case "state":
+        if (!value.trim()) return "State is required";
+        return "";
+      case "pincode":
+        if (!value.trim()) return "Pincode is required";
+        if (!isValidPincode(value)) return "Enter a valid 6-digit pincode";
+        return "";
+      default:
+        return "";
+    }
+  }, []);
+
+  const handleBlur = (name: string, value: string) => {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+    const err = validateField(name, value);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (err) next[name] = err;
+      else delete next[name];
+      return next;
+    });
+  };
+
+  const allFieldsValid =
+    isValidName(form.fullName) &&
+    isValidPhone(form.phone) &&
+    form.address.trim().length >= 10 &&
+    form.city.trim().length > 0 &&
+    form.state.trim().length > 0 &&
+    isValidPincode(form.pincode);
 
   // Pre-fill from profile
   const fetchProfile = useCallback(async () => {
@@ -78,19 +133,43 @@ function CheckoutContent() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const validateForm = (): boolean => {
-    if (!form.fullName.trim()) { setError("Full name is required"); return false; }
-    if (!form.phone.trim() || form.phone.trim().length < 10) { setError("Valid phone number is required"); return false; }
-    if (!form.address.trim()) { setError("Address is required"); return false; }
-    if (!form.city.trim()) { setError("City is required"); return false; }
-    if (!form.state.trim()) { setError("State is required"); return false; }
-    if (!form.pincode.trim() || form.pincode.trim().length !== 6) { setError("Valid 6-digit pincode is required"); return false; }
-    setError("");
-    return true;
+  // Pincode auto-fill
+  const handlePincodeChange = async (value: string) => {
+    const digits = value.replace(/\D/g, "").slice(0, 6);
+    updateField("pincode", digits);
+
+    if (digits.length === 6) {
+      try {
+        const res = await fetch(`https://api.postalpincode.in/pincode/${digits}`);
+        const data = await res.json();
+        if (data?.[0]?.Status === "Success" && data[0].PostOffice?.length > 0) {
+          const po = data[0].PostOffice[0];
+          setForm((prev) => ({
+            ...prev,
+            city: po.District || prev.city,
+            state: po.State || prev.state,
+          }));
+        }
+      } catch {
+        // Silently fail
+      }
+    }
   };
 
   const handlePlaceOrder = async () => {
-    if (!validateForm()) return;
+    // Validate all
+    const fields: (keyof ShippingForm)[] = ["fullName", "phone", "address", "city", "state", "pincode"];
+    const newErrors: FieldErrors = {};
+    const newTouched: Record<string, boolean> = {};
+    fields.forEach((f) => {
+      newTouched[f] = true;
+      const err = validateField(f, form[f]);
+      if (err) newErrors[f] = err;
+    });
+    setTouched(newTouched);
+    setFieldErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) return;
     if (items.length === 0) return;
 
     setPlacing(true);
@@ -127,7 +206,6 @@ function CheckoutContent() {
 
     try {
       if (paymentMethod === "cod") {
-        // COD order
         const res = await fetch("/api/place-cod-order", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -138,7 +216,6 @@ function CheckoutContent() {
         clearCart();
         router.push(`/order/${data.order_id}`);
       } else {
-        // Online payment via Razorpay
         const res = await fetch("/api/create-order", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -163,7 +240,6 @@ function CheckoutContent() {
             color: "#c9a84c",
           },
           handler: async (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
-            // Verify payment
             try {
               const verifyRes = await fetch("/api/verify-payment", {
                 method: "POST",
@@ -193,7 +269,7 @@ function CheckoutContent() {
 
         const rzp = new window.Razorpay(options);
         rzp.open();
-        return; // Don't set placing false yet, Razorpay popup is open
+        return;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -203,6 +279,12 @@ function CheckoutContent() {
   };
 
   if (items.length === 0) return null;
+
+  const getInputStyle = (name: string): React.CSSProperties => {
+    if (!touched[name]) return styles.input;
+    if (fieldErrors[name]) return { ...styles.input, borderColor: "#e74c3c" };
+    return { ...styles.input, borderColor: "#2ecc71" };
+  };
 
   return (
     <div style={styles.container}>
@@ -223,9 +305,13 @@ function CheckoutContent() {
                   type="text"
                   value={form.fullName}
                   onChange={(e) => updateField("fullName", e.target.value)}
+                  onBlur={() => handleBlur("fullName", form.fullName)}
                   placeholder="Your full name"
-                  style={styles.input}
+                  style={getInputStyle("fullName")}
                 />
+                {touched.fullName && fieldErrors.fullName && (
+                  <span style={styles.fieldError}>{fieldErrors.fullName}</span>
+                )}
               </div>
 
               <div style={styles.field}>
@@ -234,10 +320,14 @@ function CheckoutContent() {
                   type="tel"
                   value={form.phone}
                   onChange={(e) => updateField("phone", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  onBlur={() => handleBlur("phone", form.phone)}
                   placeholder="10-digit mobile number"
-                  style={styles.input}
+                  style={getInputStyle("phone")}
                   maxLength={10}
                 />
+                {touched.phone && fieldErrors.phone && (
+                  <span style={styles.fieldError}>{fieldErrors.phone}</span>
+                )}
               </div>
 
               <div style={styles.field}>
@@ -246,9 +336,13 @@ function CheckoutContent() {
                   type="text"
                   value={form.address}
                   onChange={(e) => updateField("address", e.target.value)}
+                  onBlur={() => handleBlur("address", form.address)}
                   placeholder="Street address, apartment, etc."
-                  style={styles.input}
+                  style={getInputStyle("address")}
                 />
+                {touched.address && fieldErrors.address && (
+                  <span style={styles.fieldError}>{fieldErrors.address}</span>
+                )}
               </div>
 
               <div style={styles.row}>
@@ -258,9 +352,13 @@ function CheckoutContent() {
                     type="text"
                     value={form.city}
                     onChange={(e) => updateField("city", e.target.value)}
+                    onBlur={() => handleBlur("city", form.city)}
                     placeholder="City"
-                    style={styles.input}
+                    style={getInputStyle("city")}
                   />
+                  {touched.city && fieldErrors.city && (
+                    <span style={styles.fieldError}>{fieldErrors.city}</span>
+                  )}
                 </div>
                 <div style={{ ...styles.field, flex: 1 }}>
                   <label style={styles.label}>State *</label>
@@ -268,20 +366,28 @@ function CheckoutContent() {
                     type="text"
                     value={form.state}
                     onChange={(e) => updateField("state", e.target.value)}
+                    onBlur={() => handleBlur("state", form.state)}
                     placeholder="State"
-                    style={styles.input}
+                    style={getInputStyle("state")}
                   />
+                  {touched.state && fieldErrors.state && (
+                    <span style={styles.fieldError}>{fieldErrors.state}</span>
+                  )}
                 </div>
                 <div style={{ ...styles.field, flex: 0.7 }}>
                   <label style={styles.label}>Pincode *</label>
                   <input
                     type="text"
                     value={form.pincode}
-                    onChange={(e) => updateField("pincode", e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    onChange={(e) => handlePincodeChange(e.target.value)}
+                    onBlur={() => handleBlur("pincode", form.pincode)}
                     placeholder="110001"
-                    style={styles.input}
+                    style={getInputStyle("pincode")}
                     maxLength={6}
                   />
+                  {touched.pincode && fieldErrors.pincode && (
+                    <span style={styles.fieldError}>{fieldErrors.pincode}</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -387,11 +493,11 @@ function CheckoutContent() {
 
           <button
             onClick={handlePlaceOrder}
-            disabled={placing}
+            disabled={placing || !allFieldsValid}
             style={{
               ...styles.placeOrderBtn,
-              opacity: placing ? 0.6 : 1,
-              cursor: placing ? "not-allowed" : "pointer",
+              opacity: placing || !allFieldsValid ? 0.6 : 1,
+              cursor: placing || !allFieldsValid ? "not-allowed" : "pointer",
             }}
           >
             {placing
@@ -475,6 +581,12 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     width: "100%",
     boxSizing: "border-box" as const,
+    transition: "border-color 0.2s",
+  },
+  fieldError: {
+    color: "#e74c3c",
+    fontSize: 12,
+    marginTop: 2,
   },
   paymentOption: {
     display: "flex",

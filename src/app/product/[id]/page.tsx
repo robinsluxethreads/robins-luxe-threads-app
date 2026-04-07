@@ -11,8 +11,9 @@ interface PageProps {
 async function getProduct(id: string): Promise<Product | null> {
   const { data } = await supabase
     .from("products")
-    .select("*")
+    .select("id, name, price, old_price, category, description, sizes, badge, emoji, images, is_active")
     .eq("id", Number(id))
+    .eq("is_active", true)
     .single();
   return data as Product | null;
 }
@@ -20,7 +21,7 @@ async function getProduct(id: string): Promise<Product | null> {
 async function getRelatedProducts(category: string, excludeId: number): Promise<Product[]> {
   const { data } = await supabase
     .from("products")
-    .select("*")
+    .select("id, name, price, old_price, category, emoji, images, badge, is_active, sizes, description")
     .eq("category", category)
     .eq("is_active", true)
     .neq("id", excludeId)

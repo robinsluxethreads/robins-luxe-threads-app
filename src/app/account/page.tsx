@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
+import { isValidPhone, isValidPincode } from "@/lib/validation";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 interface Profile {
@@ -27,6 +28,16 @@ interface Order {
   created_at: string;
 }
 
+interface FieldErrors {
+  [key: string]: string;
+}
+
+function formatPhoneDisplay(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+  if (digits.length <= 5) return digits;
+  return `${digits.slice(0, 5)} ${digits.slice(5)}`;
+}
+
 function AccountContent() {
   const { user, signOut } = useAuth();
   const router = useRouter();
@@ -42,6 +53,69 @@ function AccountContent() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+  const validateField = useCallback((name: string, value: string) => {
+    let error = "";
+    switch (name) {
+      case "full_name":
+        if (value.trim().length < 2) error = "Name must be at least 2 characters";
+        else if (/\d/.test(value)) error = "Name cannot contain numbers";
+        break;
+      case "phone":
+        if (value && !isValidPhone(value.replace(/\s/g, "")))
+          error = "Enter a valid 10-digit phone number";
+        break;
+      case "address":
+        if (value && value.trim().length < 10)
+          error = "Address must be at least 10 characters";
+        break;
+      case "pincode":
+        if (value && !isValidPincode(value))
+          error = "Enter a valid 6-digit pincode";
+        break;
+    }
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (error) next[name] = error;
+      else delete next[name];
+      return next;
+    });
+  }, []);
+
+  const handleBlur = (name: string, value: string) => {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+    validateField(name, value);
+  };
+
+  // Pincode auto-fill
+  const handlePincodeChange = async (pincode: string) => {
+    const digits = pincode.replace(/\D/g, "").slice(0, 6);
+    setProfile((prev) => ({ ...prev, pincode: digits }));
+
+    if (digits.length === 6) {
+      try {
+        const res = await fetch(`https://api.postalpincode.in/pincode/${digits}`);
+        const data = await res.json();
+        if (data?.[0]?.Status === "Success" && data[0].PostOffice?.length > 0) {
+          const po = data[0].PostOffice[0];
+          setProfile((prev) => ({
+            ...prev,
+            city: po.District || prev.city,
+            state: po.State || prev.state,
+          }));
+        }
+      } catch {
+        // Silently fail - user can fill manually
+      }
+    }
+  };
+
+  const handlePhoneChange = (value: string) => {
+    const digits = value.replace(/\D/g, "").slice(0, 10);
+    setProfile((prev) => ({ ...prev, phone: digits }));
+  };
 
   const fetchProfile = useCallback(async () => {
     if (!user) return;
@@ -85,6 +159,22 @@ function AccountContent() {
     e.preventDefault();
     if (!user) return;
 
+    // Validate all fields
+    const fields = ["full_name", "phone", "address", "pincode"];
+    const values: Record<string, string> = {
+      full_name: profile.full_name,
+      phone: profile.phone,
+      address: profile.address,
+      pincode: profile.pincode,
+    };
+    fields.forEach((f) => {
+      setTouched((prev) => ({ ...prev, [f]: true }));
+      validateField(f, values[f]);
+    });
+
+    // Check for existing errors
+    if (Object.keys(fieldErrors).length > 0) return;
+
     setSaving(true);
     setMessage(null);
 
@@ -118,6 +208,12 @@ function AccountContent() {
     user?.user_metadata?.full_name ||
     user?.email?.split("@")[0] ||
     "there";
+
+  const getInputStyle = (name: string): React.CSSProperties => {
+    if (!touched[name]) return styles.input;
+    if (fieldErrors[name]) return { ...styles.input, borderColor: "#e74c3c" };
+    return { ...styles.input, borderColor: "#2ecc71" };
+  };
 
   return (
     <div style={styles.container}>
@@ -161,20 +257,31 @@ function AccountContent() {
                   type="text"
                   value={profile.full_name}
                   onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                  onBlur={() => handleBlur("full_name", profile.full_name)}
                   placeholder="Your full name"
-                  style={styles.input}
+                  style={getInputStyle("full_name")}
                 />
+                {touched.full_name && fieldErrors.full_name && (
+                  <span style={styles.fieldError}>{fieldErrors.full_name}</span>
+                )}
               </div>
 
               <div style={styles.field}>
                 <label style={styles.label}>Phone</label>
-                <input
-                  type="tel"
-                  value={profile.phone}
-                  onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                  placeholder="+91 9876543210"
-                  style={styles.input}
-                />
+                <div style={{ position: "relative" as const }}>
+                  <span style={styles.phonePrefix}>+91</span>
+                  <input
+                    type="tel"
+                    value={formatPhoneDisplay(profile.phone)}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    onBlur={() => handleBlur("phone", profile.phone)}
+                    placeholder="98765 43210"
+                    style={{ ...getInputStyle("phone"), paddingLeft: 48 }}
+                  />
+                </div>
+                {touched.phone && fieldErrors.phone && (
+                  <span style={styles.fieldError}>{fieldErrors.phone}</span>
+                )}
               </div>
 
               <div style={styles.field}>
@@ -183,9 +290,13 @@ function AccountContent() {
                   type="text"
                   value={profile.address}
                   onChange={(e) => setProfile({ ...profile, address: e.target.value })}
+                  onBlur={() => handleBlur("address", profile.address)}
                   placeholder="Street address"
-                  style={styles.input}
+                  style={getInputStyle("address")}
                 />
+                {touched.address && fieldErrors.address && (
+                  <span style={styles.fieldError}>{fieldErrors.address}</span>
+                )}
               </div>
 
               <div style={styles.row}>
@@ -214,16 +325,15 @@ function AccountContent() {
                   <input
                     type="text"
                     value={profile.pincode}
-                    onChange={(e) =>
-                      setProfile({
-                        ...profile,
-                        pincode: e.target.value.replace(/\D/g, "").slice(0, 6),
-                      })
-                    }
+                    onChange={(e) => handlePincodeChange(e.target.value)}
+                    onBlur={() => handleBlur("pincode", profile.pincode)}
                     placeholder="110001"
-                    style={styles.input}
+                    style={getInputStyle("pincode")}
                     maxLength={6}
                   />
+                  {touched.pincode && fieldErrors.pincode && (
+                    <span style={styles.fieldError}>{fieldErrors.pincode}</span>
+                  )}
                 </div>
               </div>
 
@@ -435,6 +545,21 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     width: "100%",
     boxSizing: "border-box" as const,
+    transition: "border-color 0.2s",
+  },
+  phonePrefix: {
+    position: "absolute" as const,
+    left: 14,
+    top: "50%",
+    transform: "translateY(-50%)",
+    color: "#888",
+    fontSize: 15,
+    pointerEvents: "none" as const,
+  },
+  fieldError: {
+    color: "#e74c3c",
+    fontSize: 12,
+    marginTop: 2,
   },
   primaryBtn: {
     padding: "14px",

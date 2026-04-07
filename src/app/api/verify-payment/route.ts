@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
+import { sanitize, rateLimit } from "@/lib/validation";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,13 +17,36 @@ function generateOrderNumber(): string {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Rate limit
+    const ip = request.headers.get("x-forwarded-for") || "unknown";
+    const { allowed } = rateLimit(`verify-payment:${ip}`, 10, 3600000);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        { status: 429 }
+      );
+    }
+
+    const text = await request.text();
+    if (text.length > 51200) {
+      return NextResponse.json({ error: "Request too large" }, { status: 413 });
+    }
+
+    const body = JSON.parse(text);
     const {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
       orderData,
     } = body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      console.warn("Payment verification attempt with missing fields", { ip });
+      return NextResponse.json(
+        { error: "Missing payment details" },
+        { status: 400 }
+      );
+    }
 
     // Verify signature
     const secret = process.env.RAZORPAY_KEY_SECRET!;
@@ -32,25 +56,37 @@ export async function POST(request: Request) {
       .digest("hex");
 
     if (generatedSignature !== razorpay_signature) {
+      console.warn("Invalid payment signature attempt", {
+        ip,
+        razorpay_order_id,
+        razorpay_payment_id,
+      });
       return NextResponse.json(
         { error: "Invalid payment signature" },
         { status: 400 }
       );
     }
 
-    // Payment verified - save order to Supabase
+    // Payment verified - log success
+    console.info("Payment verified successfully", {
+      razorpay_order_id,
+      razorpay_payment_id,
+      customer_email: orderData?.customer?.email,
+    });
+
+    // Save order to Supabase
     const orderNumber = generateOrderNumber();
     const shippingAddress = orderData.shipping_address;
-    const fullAddress = `${shippingAddress.address}, ${shippingAddress.city}, ${shippingAddress.state} - ${shippingAddress.pincode}`;
+    const fullAddress = `${sanitize(shippingAddress.address)}, ${sanitize(shippingAddress.city)}, ${sanitize(shippingAddress.state)} - ${sanitize(shippingAddress.pincode)}`;
 
     const { data, error } = await supabaseAdmin
       .from("orders")
       .insert({
         order_number: orderNumber,
         customer_id: orderData.customer.id,
-        customer_name: orderData.customer.name,
-        customer_email: orderData.customer.email,
-        customer_phone: orderData.customer.phone,
+        customer_name: sanitize(orderData.customer.name),
+        customer_email: sanitize(orderData.customer.email).toLowerCase(),
+        customer_phone: sanitize(orderData.customer.phone),
         shipping_address: fullAddress,
         items: orderData.items,
         subtotal: orderData.subtotal,
@@ -66,12 +102,21 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      console.error("Supabase insert error:", error);
+      console.error("Order save error after verified payment:", {
+        error: error.message,
+        razorpay_payment_id,
+      });
       return NextResponse.json(
         { error: "Failed to save order" },
         { status: 500 }
       );
     }
+
+    console.info("Order created successfully", {
+      order_number: orderNumber,
+      order_id: data.id,
+      payment_id: razorpay_payment_id,
+    });
 
     return NextResponse.json({
       success: true,
@@ -79,7 +124,7 @@ export async function POST(request: Request) {
       order_number: orderNumber,
     });
   } catch (error) {
-    console.error("Verify payment error:", error);
+    console.error("Verify payment error:", error instanceof Error ? error.message : "Unknown error");
     return NextResponse.json(
       { error: "Payment verification failed" },
       { status: 500 }

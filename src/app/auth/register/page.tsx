@@ -1,8 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import { useFormValidation } from "@/hooks/useFormValidation";
+import {
+  isValidEmail,
+  isValidName,
+  isValidPassword,
+  getPasswordStrength,
+} from "@/lib/validation";
 
 export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
@@ -14,19 +21,80 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const { signUp, signInWithGoogle } = useAuth();
 
+  const fieldConfig = useMemo(
+    () => ({
+      fullName: {
+        required: true,
+        minLength: 2,
+        custom: (val: string) =>
+          !isValidName(val) ? "Name must be at least 2 characters with no numbers" : null,
+      },
+      email: {
+        required: true,
+        custom: (val: string) =>
+          !isValidEmail(val.trim()) ? "Please enter a valid email address" : null,
+      },
+      password: {
+        required: true,
+        custom: (val: string) => {
+          const result = isValidPassword(val);
+          return result.valid ? null : result.errors[0];
+        },
+      },
+      confirmPassword: {
+        required: true,
+        custom: (val: string) =>
+          val !== password ? "Passwords do not match" : null,
+      },
+    }),
+    [password]
+  );
+
+  const { errors, handleBlur, validateAll, getFieldState } =
+    useFormValidation(fieldConfig);
+
+  const passwordResult = isValidPassword(password);
+  const passwordStrength = getPasswordStrength(password);
+
+  const passwordChecks = [
+    { label: "At least 8 characters", met: password.length >= 8 },
+    { label: "One uppercase letter", met: /[A-Z]/.test(password) },
+    { label: "One number", met: /[0-9]/.test(password) },
+    { label: "One special character", met: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password) },
+  ];
+
+  const strengthColor =
+    passwordStrength === "strong"
+      ? "#2ecc71"
+      : passwordStrength === "medium"
+        ? "#f39c12"
+        : "#e74c3c";
+
+  const strengthWidth =
+    passwordStrength === "strong"
+      ? "100%"
+      : passwordStrength === "medium"
+        ? "60%"
+        : "30%";
+
+  const allFieldsValid =
+    isValidName(fullName) &&
+    isValidEmail(email.trim()) &&
+    passwordResult.valid &&
+    confirmPassword === password &&
+    confirmPassword.length > 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
+    const isFormValid = validateAll({
+      fullName,
+      email,
+      password,
+      confirmPassword,
+    });
+    if (!isFormValid) return;
 
     setLoading(true);
     const { error } = await signUp(email, password, fullName);
@@ -46,6 +114,29 @@ export default function RegisterPage() {
     if (error) {
       setError(error.message);
     }
+  };
+
+  const renderFieldIndicator = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (!state.isTouched) return null;
+    if (state.valid) {
+      return <span style={styles.validIcon}>&#10003;</span>;
+    }
+    return null;
+  };
+
+  const renderFieldError = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (state.isTouched && state.error) {
+      return <span style={styles.fieldError}>{state.error}</span>;
+    }
+    return null;
+  };
+
+  const getInputBorderColor = (fieldName: string) => {
+    const state = getFieldState(fieldName);
+    if (!state.isTouched) return "#333";
+    return state.valid ? "#2ecc71" : "#e74c3c";
   };
 
   if (success) {
@@ -79,53 +170,131 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.field}>
             <label style={styles.label}>Full Name</label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              placeholder="Your full name"
-              style={styles.input}
-            />
+            <div style={styles.inputWrapper}>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                onBlur={() => handleBlur("fullName", fullName)}
+                required
+                placeholder="Your full name"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("fullName"),
+                }}
+              />
+              {renderFieldIndicator("fullName")}
+            </div>
+            {renderFieldError("fullName")}
           </div>
 
           <div style={styles.field}>
             <label style={styles.label}>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              placeholder="you@example.com"
-              style={styles.input}
-            />
+            <div style={styles.inputWrapper}>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => handleBlur("email", email)}
+                required
+                placeholder="you@example.com"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("email"),
+                }}
+              />
+              {renderFieldIndicator("email")}
+            </div>
+            {renderFieldError("email")}
           </div>
 
           <div style={styles.field}>
             <label style={styles.label}>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              placeholder="Min. 6 characters"
-              style={styles.input}
-            />
+            <div style={styles.inputWrapper}>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onBlur={() => handleBlur("password", password)}
+                required
+                placeholder="Min. 8 characters"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("password"),
+                }}
+              />
+              {renderFieldIndicator("password")}
+            </div>
+            {renderFieldError("password")}
+
+            {/* Password Strength Meter */}
+            {password.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={styles.strengthBarBg}>
+                  <div
+                    style={{
+                      ...styles.strengthBarFill,
+                      width: strengthWidth,
+                      background: strengthColor,
+                    }}
+                  />
+                </div>
+                <p style={{ fontSize: 12, color: strengthColor, marginTop: 4, textTransform: "capitalize" }}>
+                  {passwordStrength}
+                </p>
+
+                {/* Password Requirements Checklist */}
+                <div style={{ marginTop: 8 }}>
+                  {passwordChecks.map((check) => (
+                    <div key={check.label} style={styles.checkItem}>
+                      <span
+                        style={{
+                          color: check.met ? "#2ecc71" : "#666",
+                          fontSize: 14,
+                          marginRight: 6,
+                        }}
+                      >
+                        {check.met ? "\u2713" : "\u2717"}
+                      </span>
+                      <span style={{ fontSize: 12, color: check.met ? "#aaa" : "#666" }}>
+                        {check.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={styles.field}>
             <label style={styles.label}>Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              placeholder="Re-enter password"
-              style={styles.input}
-            />
+            <div style={styles.inputWrapper}>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                onBlur={() => handleBlur("confirmPassword", confirmPassword)}
+                required
+                placeholder="Re-enter password"
+                style={{
+                  ...styles.input,
+                  borderColor: getInputBorderColor("confirmPassword"),
+                }}
+              />
+              {renderFieldIndicator("confirmPassword")}
+            </div>
+            {renderFieldError("confirmPassword")}
           </div>
 
-          <button type="submit" disabled={loading} style={styles.primaryBtn}>
+          <button
+            type="submit"
+            disabled={loading || !allFieldsValid}
+            style={{
+              ...styles.primaryBtn,
+              opacity: loading || !allFieldsValid ? 0.5 : 1,
+              cursor: loading || !allFieldsValid ? "not-allowed" : "pointer",
+            }}
+          >
             {loading ? "Creating Account..." : "Create Account"}
           </button>
         </form>
@@ -236,8 +405,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#bbb",
     fontWeight: 500,
   },
+  inputWrapper: {
+    position: "relative" as const,
+  },
   input: {
-    padding: "12px 14px",
+    padding: "12px 40px 12px 14px",
     background: "#1a1a1a",
     border: "1px solid #333",
     borderRadius: 8,
@@ -245,6 +417,38 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     outline: "none",
     transition: "border-color 0.2s",
+    width: "100%",
+    boxSizing: "border-box" as const,
+  },
+  validIcon: {
+    position: "absolute" as const,
+    right: 12,
+    top: "50%",
+    transform: "translateY(-50%)",
+    color: "#2ecc71",
+    fontSize: 16,
+    fontWeight: 700,
+  },
+  fieldError: {
+    color: "#e74c3c",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  strengthBarBg: {
+    height: 4,
+    background: "#333",
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  strengthBarFill: {
+    height: "100%",
+    borderRadius: 2,
+    transition: "width 0.3s, background 0.3s",
+  },
+  checkItem: {
+    display: "flex",
+    alignItems: "center",
+    marginBottom: 2,
   },
   primaryBtn: {
     padding: "14px",

@@ -54,7 +54,7 @@ export default function ShopContent() {
     async function loadCategories() {
       const { data } = await supabase
         .from("categories")
-        .select("*")
+        .select("id, name, slug, emoji, gradient")
         .order("name");
       if (data) setCategories(data as Category[]);
     }
@@ -69,7 +69,7 @@ export default function ShopContent() {
 
       let query = supabase
         .from("products")
-        .select("*", { count: "exact" })
+        .select("id, name, price, old_price, category, emoji, images, badge, is_active, sizes, description", { count: "exact" })
         .eq("is_active", true);
 
       // Search filter

@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import Toast from "@/components/Toast";
+import { isValidEmail, isValidName } from "@/lib/validation";
 
 const SUBJECTS = [
   "General Inquiry",
@@ -35,6 +36,10 @@ const contactInfo = [
   },
 ];
 
+interface FieldErrors {
+  [key: string]: string;
+}
+
 export default function ContactPage() {
   const [form, setForm] = useState({
     first_name: "",
@@ -42,13 +47,50 @@ export default function ContactPage() {
     email: "",
     subject: SUBJECTS[0],
     message: "",
+    website: "", // honeypot field
   });
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ show: false, message: "", isError: false });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   const closeToast = useCallback(() => {
     setToast((prev) => ({ ...prev, show: false }));
   }, []);
+
+  const validateField = (name: string, value: string): string => {
+    switch (name) {
+      case "first_name":
+        if (!value.trim()) return "First name is required";
+        if (!isValidName(value)) return "Min 2 chars, no numbers";
+        return "";
+      case "last_name":
+        if (!value.trim()) return "Last name is required";
+        if (!isValidName(value)) return "Min 2 chars, no numbers";
+        return "";
+      case "email":
+        if (!value.trim()) return "Email is required";
+        if (!isValidEmail(value.trim())) return "Enter a valid email address";
+        return "";
+      case "message":
+        if (!value.trim()) return "Message is required";
+        if (value.trim().length < 10) return "Message must be at least 10 characters";
+        return "";
+      default:
+        return "";
+    }
+  };
+
+  const handleBlur = (name: string, value: string) => {
+    setTouched((prev) => ({ ...prev, [name]: true }));
+    const err = validateField(name, value);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (err) next[name] = err;
+      else delete next[name];
+      return next;
+    });
+  };
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -58,6 +100,21 @@ export default function ContactPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate all fields
+    const fields = ["first_name", "last_name", "email", "message"];
+    const newErrors: FieldErrors = {};
+    const newTouched: Record<string, boolean> = {};
+    fields.forEach((f) => {
+      newTouched[f] = true;
+      const err = validateField(f, form[f as keyof typeof form]);
+      if (err) newErrors[f] = err;
+    });
+    setTouched(newTouched);
+    setFieldErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) return;
+
     setLoading(true);
     try {
       const res = await fetch("/api/contact", {
@@ -69,7 +126,9 @@ export default function ContactPage() {
 
       if (res.ok) {
         setToast({ show: true, message: "Message sent successfully!", isError: false });
-        setForm({ first_name: "", last_name: "", email: "", subject: SUBJECTS[0], message: "" });
+        setForm({ first_name: "", last_name: "", email: "", subject: SUBJECTS[0], message: "", website: "" });
+        setFieldErrors({});
+        setTouched({});
       } else {
         setToast({ show: true, message: data.error || "Failed to send message", isError: true });
       }
@@ -78,6 +137,18 @@ export default function ContactPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getInputClass = (name: string): string => {
+    if (!touched[name]) return "input-dark";
+    if (fieldErrors[name]) return "input-dark";
+    return "input-dark";
+  };
+
+  const getInputStyle = (name: string): React.CSSProperties => {
+    if (!touched[name]) return {};
+    if (fieldErrors[name]) return { borderColor: "#e74c3c" };
+    return { borderColor: "#2ecc71" };
   };
 
   return (
@@ -111,6 +182,20 @@ export default function ContactPage() {
                 Send us a Message
               </h2>
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Honeypot field - hidden from real users */}
+                <div style={{ position: "absolute", left: "-9999px", opacity: 0, height: 0, overflow: "hidden" }} aria-hidden="true">
+                  <label htmlFor="website">Website</label>
+                  <input
+                    type="text"
+                    id="website"
+                    name="website"
+                    value={form.website}
+                    onChange={handleChange}
+                    tabIndex={-1}
+                    autoComplete="off"
+                  />
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm mb-1" style={{ color: "#999" }}>
@@ -121,10 +206,15 @@ export default function ContactPage() {
                       name="first_name"
                       value={form.first_name}
                       onChange={handleChange}
-                      className="input-dark"
+                      onBlur={() => handleBlur("first_name", form.first_name)}
+                      className={getInputClass("first_name")}
+                      style={getInputStyle("first_name")}
                       placeholder="John"
                       required
                     />
+                    {touched.first_name && fieldErrors.first_name && (
+                      <p style={{ color: "#e74c3c", fontSize: 12, marginTop: 4 }}>{fieldErrors.first_name}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm mb-1" style={{ color: "#999" }}>
@@ -135,10 +225,15 @@ export default function ContactPage() {
                       name="last_name"
                       value={form.last_name}
                       onChange={handleChange}
-                      className="input-dark"
+                      onBlur={() => handleBlur("last_name", form.last_name)}
+                      className={getInputClass("last_name")}
+                      style={getInputStyle("last_name")}
                       placeholder="Doe"
                       required
                     />
+                    {touched.last_name && fieldErrors.last_name && (
+                      <p style={{ color: "#e74c3c", fontSize: 12, marginTop: 4 }}>{fieldErrors.last_name}</p>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -150,10 +245,15 @@ export default function ContactPage() {
                     name="email"
                     value={form.email}
                     onChange={handleChange}
-                    className="input-dark"
+                    onBlur={() => handleBlur("email", form.email)}
+                    className={getInputClass("email")}
+                    style={getInputStyle("email")}
                     placeholder="john@example.com"
                     required
                   />
+                  {touched.email && fieldErrors.email && (
+                    <p style={{ color: "#e74c3c", fontSize: 12, marginTop: 4 }}>{fieldErrors.email}</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm mb-1" style={{ color: "#999" }}>
@@ -173,19 +273,31 @@ export default function ContactPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm mb-1" style={{ color: "#999" }}>
-                    Message
-                  </label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <label className="block text-sm mb-1" style={{ color: "#999" }}>
+                      Message
+                    </label>
+                    <span style={{ color: form.message.length >= 10 ? "#2ecc71" : "#666", fontSize: 12 }}>
+                      {form.message.length}/500
+                    </span>
+                  </div>
                   <textarea
                     name="message"
                     value={form.message}
-                    onChange={handleChange}
-                    className="input-dark"
+                    onChange={(e) => {
+                      if (e.target.value.length <= 500) handleChange(e);
+                    }}
+                    onBlur={() => handleBlur("message", form.message)}
+                    className={getInputClass("message")}
+                    style={{ ...getInputStyle("message"), resize: "vertical" as const }}
                     rows={5}
-                    placeholder="How can we help you?"
+                    placeholder="How can we help you? (min 10 characters)"
                     required
-                    style={{ resize: "vertical" }}
+                    maxLength={500}
                   />
+                  {touched.message && fieldErrors.message && (
+                    <p style={{ color: "#e74c3c", fontSize: 12, marginTop: 4 }}>{fieldErrors.message}</p>
+                  )}
                 </div>
                 <button type="submit" className="btn-gold w-full" disabled={loading}>
                   {loading ? "Sending..." : "Send Message"}

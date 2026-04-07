@@ -7,15 +7,17 @@ import ProductCard from "@/components/ProductCard";
 import NewsletterForm from "@/components/NewsletterForm";
 
 async function getCategories(): Promise<Category[]> {
-  const { data } = await supabase.from("categories").select("*").order("name");
+  const { data } = await supabase
+    .from("categories")
+    .select("id, name, slug, emoji, gradient")
+    .order("name");
   return (data as Category[]) || [];
 }
 
 async function getTrendingProducts(): Promise<Product[]> {
-  // Fetch 8 random active products for "Trending Now"
   const { data } = await supabase
     .from("products")
-    .select("*")
+    .select("id, name, price, old_price, category, emoji, images, badge, is_active, sizes, description")
     .eq("is_active", true)
     .limit(8);
   return (data as Product[]) || [];

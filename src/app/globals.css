@@ -879,6 +879,38 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* ==========================================
+   WHATSAPP FLOATING BUTTON
+   ========================================== */
+.whatsapp-float {
+  animation: whatsapp-pulse 2s ease-in-out infinite;
+}
+
+.whatsapp-float:hover {
+  transform: scale(1.1) !important;
+  box-shadow: 0 6px 30px rgba(37, 211, 102, 0.5) !important;
+  animation: none;
+}
+
+@keyframes whatsapp-pulse {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(37, 211, 102, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 30px rgba(37, 211, 102, 0.6), 0 0 0 8px rgba(37, 211, 102, 0.1);
+  }
+}
+
+/* ==========================================
+   GOLD SHIMMER SKELETON
+   ========================================== */
+.skeleton-gold {
+  background: linear-gradient(90deg, #1a1a1a 25%, rgba(201, 168, 76, 0.15) 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 8px;
+}
+
 /* Auth spinner */
 @keyframes spin {
   to {
