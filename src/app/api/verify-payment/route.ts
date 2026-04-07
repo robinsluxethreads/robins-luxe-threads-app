@@ -112,6 +112,26 @@ export async function POST(request: Request) {
       );
     }
 
+    // Decrement stock for each item
+    if (orderData.items && Array.isArray(orderData.items)) {
+      for (const item of orderData.items) {
+        const qty = Math.max(1, Math.min(item.quantity || 1, 99));
+        // Fetch current stock then decrement
+        const { data: prod } = await supabaseAdmin
+          .from("products")
+          .select("stock_quantity")
+          .eq("id", item.productId)
+          .single();
+        if (prod) {
+          const currentStock = prod.stock_quantity ?? 100;
+          await supabaseAdmin
+            .from("products")
+            .update({ stock_quantity: Math.max(0, currentStock - qty) })
+            .eq("id", item.productId);
+        }
+      }
+    }
+
     console.info("Order created successfully", {
       order_number: orderNumber,
       order_id: data.id,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import AdminGuard from "@/components/AdminGuard";
@@ -15,8 +15,17 @@ const NAV_ITEMS = [
   { href: "/admin/messages", label: "Messages", icon: "✉️" },
   { href: "/admin/subscribers", label: "Subscribers", icon: "📧" },
   { href: "/admin/coupons", label: "Coupons", icon: "🏷️" },
+  { href: "/admin/activity", label: "Activity Log", icon: "🕐" },
   { href: "/admin/settings", label: "Settings", icon: "⚙️" },
 ];
+
+interface SearchResult {
+  type: "product" | "order" | "customer";
+  id: string;
+  label: string;
+  sub: string;
+  href: string;
+}
 
 export default function AdminLayout({
   children,
@@ -24,13 +33,98 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     fetchUnreadCount();
   }, []);
+
+  // Keyboard shortcut: Cmd+K / Ctrl+K
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 100);
+      }
+      if (e.key === "Escape" && searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery("");
+        setSearchResults([]);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [searchOpen]);
+
+  const performSearch = useCallback(async (q: string) => {
+    if (!q || q.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const [prodRes, orderRes, custRes] = await Promise.all([
+        supabase.from("products").select("id, name, category").ilike("name", `%${q}%`).limit(5),
+        supabase.from("orders").select("id, order_number, customer_name").or(`order_number.ilike.%${q}%,customer_name.ilike.%${q}%`).limit(5),
+        supabase.from("profiles").select("id, full_name, email").or(`full_name.ilike.%${q}%,email.ilike.%${q}%`).limit(5),
+      ]);
+
+      const results: SearchResult[] = [];
+      (prodRes.data || []).forEach((p) => {
+        results.push({
+          type: "product",
+          id: p.id,
+          label: p.name,
+          sub: p.category,
+          href: `/admin/products`,
+        });
+      });
+      (orderRes.data || []).forEach((o) => {
+        results.push({
+          type: "order",
+          id: o.id,
+          label: o.order_number,
+          sub: o.customer_name,
+          href: `/admin/orders`,
+        });
+      });
+      (custRes.data || []).forEach((c) => {
+        results.push({
+          type: "customer",
+          id: c.id,
+          label: c.full_name || c.email,
+          sub: c.email,
+          href: `/admin/customers`,
+        });
+      });
+
+      setSearchResults(results);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => performSearch(searchQuery), 300);
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [searchQuery, performSearch]);
 
   async function fetchUnreadCount() {
     const { count } = await supabase
@@ -43,6 +137,12 @@ export default function AdminLayout({
   const isActive = (href: string) => {
     if (href === "/admin") return pathname === "/admin";
     return pathname.startsWith(href);
+  };
+
+  const typeIcon: Record<string, string> = {
+    product: "👗",
+    order: "📦",
+    customer: "👥",
   };
 
   return (
@@ -193,6 +293,7 @@ export default function AdminLayout({
               position: "sticky",
               top: 0,
               zIndex: 30,
+              gap: "1rem",
             }}
           >
             {/* Hamburger (mobile) */}
@@ -218,6 +319,31 @@ export default function AdminLayout({
                 {user?.user_metadata?.full_name || user?.email?.split("@")[0] || "Admin"}
               </span>
             </div>
+
+            {/* Search button */}
+            <button
+              onClick={() => { setSearchOpen(true); setTimeout(() => searchInputRef.current?.focus(), 100); }}
+              style={{
+                padding: "0.4rem 0.9rem",
+                background: "#1a1a1a",
+                border: "1px solid #2a2a2a",
+                borderRadius: 8,
+                color: "#666",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                fontFamily: "'Poppins', sans-serif",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              Search...
+              <span style={{ fontSize: "0.7rem", color: "#555", marginLeft: 4 }}>Cmd+K</span>
+            </button>
 
             <button
               onClick={() => signOut()}
@@ -250,6 +376,114 @@ export default function AdminLayout({
             {children}
           </main>
         </div>
+
+        {/* Search Modal */}
+        {searchOpen && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.6)",
+              zIndex: 200,
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "center",
+              padding: "10vh 1rem",
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setSearchOpen(false);
+                setSearchQuery("");
+                setSearchResults([]);
+              }
+            }}
+          >
+            <div
+              style={{
+                background: "#1a1a1a",
+                border: "1px solid #2a2a2a",
+                borderRadius: 12,
+                width: "100%",
+                maxWidth: 520,
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "1rem", borderBottom: "1px solid #2a2a2a" }}>
+                <input
+                  ref={searchInputRef}
+                  placeholder="Search products, orders, customers..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "0.65rem 0.75rem",
+                    background: "#111",
+                    border: "1px solid #333",
+                    borderRadius: 8,
+                    color: "#fff",
+                    fontSize: "0.9rem",
+                    fontFamily: "'Poppins', sans-serif",
+                    outline: "none",
+                  }}
+                  onFocus={(e) => (e.target.style.borderColor = "#c9a84c")}
+                  onBlur={(e) => (e.target.style.borderColor = "#333")}
+                />
+              </div>
+              <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                {searchLoading ? (
+                  <div style={{ padding: "1.5rem", textAlign: "center", color: "#888", fontSize: "0.85rem" }}>
+                    Searching...
+                  </div>
+                ) : searchResults.length === 0 && searchQuery.length >= 2 ? (
+                  <div style={{ padding: "1.5rem", textAlign: "center", color: "#888", fontSize: "0.85rem" }}>
+                    No results found
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div style={{ padding: "1.5rem", textAlign: "center", color: "#666", fontSize: "0.85rem" }}>
+                    Type to search...
+                  </div>
+                ) : (
+                  searchResults.map((r) => (
+                    <button
+                      key={r.type + r.id}
+                      onClick={() => {
+                        router.push(r.href);
+                        setSearchOpen(false);
+                        setSearchQuery("");
+                        setSearchResults([]);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        width: "100%",
+                        padding: "0.75rem 1rem",
+                        background: "transparent",
+                        border: "none",
+                        borderBottom: "1px solid #1f1f1f",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        transition: "background 0.15s",
+                      }}
+                      onMouseOver={(e) => (e.currentTarget.style.background = "#222")}
+                      onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <span style={{ fontSize: "1.2rem" }}>{typeIcon[r.type] || "📄"}</span>
+                      <div>
+                        <div style={{ color: "#ededed", fontSize: "0.85rem", fontWeight: 500 }}>
+                          {r.label}
+                        </div>
+                        <div style={{ color: "#888", fontSize: "0.75rem" }}>
+                          {r.sub} - {r.type}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <style>{`
           .admin-sidebar {

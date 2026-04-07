@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Message {
   id: string;
@@ -14,6 +16,8 @@ interface Message {
 }
 
 export default function AdminMessages() {
+  const { user } = useAuth();
+  const adminEmail = user?.email || "admin";
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -38,14 +42,17 @@ export default function AdminMessages() {
       .from("messages")
       .update({ is_read: !current })
       .eq("id", id);
+    await logActivity(adminEmail, "status_changed", "message", id, { is_read: !current });
     fetchMessages();
   }
 
   async function handleDelete(id: string) {
+    const msg = messages.find((m) => m.id === id);
     const { error } = await supabase.from("messages").delete().eq("id", id);
     if (error) {
       alert("Error deleting: " + error.message);
     } else {
+      await logActivity(adminEmail, "deleted", "message", id, { from: msg?.name, subject: msg?.subject });
       setDeleteConfirm(null);
       fetchMessages();
     }

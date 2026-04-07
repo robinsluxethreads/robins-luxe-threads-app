@@ -14,6 +14,8 @@ export interface Product {
   emoji: string | null;
   images: string[];
   is_active: boolean;
+  stock_quantity?: number;
+  low_stock_threshold?: number;
 }
 
 export interface Category {

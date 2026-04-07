@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { downloadCSV } from "@/lib/csvExport";
+import { logActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface OrderItem {
   name: string;
@@ -181,6 +183,8 @@ function OrderTimeline({ order }: { order: Order }) {
 }
 
 export default function AdminOrders() {
+  const { user } = useAuth();
+  const adminEmail = user?.email || "admin";
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -213,6 +217,7 @@ export default function AdminOrders() {
   }, [fetchOrders]);
 
   async function updateStatus(id: string, newStatus: string) {
+    const order = orders.find((o) => o.id === id);
     const { error } = await supabase
       .from("orders")
       .update({ order_status: newStatus })
@@ -220,6 +225,11 @@ export default function AdminOrders() {
     if (error) {
       alert("Error updating: " + error.message);
     } else {
+      await logActivity(adminEmail, "status_changed", "order", id, {
+        order_number: order?.order_number,
+        from: order?.order_status,
+        to: newStatus,
+      });
       fetchOrders();
     }
   }

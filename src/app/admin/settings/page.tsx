@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface ConfigEntry {
   id?: string;
@@ -44,6 +46,8 @@ const SECTIONS = [
 ];
 
 export default function AdminSettings() {
+  const { user } = useAuth();
+  const adminEmail = user?.email || "admin";
   const [config, setConfig] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -84,6 +88,7 @@ export default function AdminSettings() {
         if (error) throw error;
       }
 
+      await logActivity(adminEmail, "updated", "settings", undefined, { keys: Object.keys(config) });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {

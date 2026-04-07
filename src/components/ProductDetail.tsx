@@ -167,7 +167,7 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
             )}
 
             {/* Price */}
-            <div className="flex items-center gap-3 mb-8">
+            <div className="flex items-center gap-3 mb-4">
               <span className="text-2xl font-bold" style={{ color: "#c9a84c" }}>
                 {formatPrice(product.price)}
               </span>
@@ -184,6 +184,33 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
                   {Math.round(((product.old_price - product.price) / product.old_price) * 100)}% OFF
                 </span>
               )}
+            </div>
+
+            {/* Stock Status */}
+            <div className="mb-8">
+              {(() => {
+                const qty = product.stock_quantity ?? 100;
+                const threshold = product.low_stock_threshold ?? 10;
+                if (qty === 0) {
+                  return (
+                    <span style={{ color: "#e74c3c", fontWeight: 600, fontSize: "0.9rem" }}>
+                      Out of Stock
+                    </span>
+                  );
+                }
+                if (qty <= threshold) {
+                  return (
+                    <span style={{ color: "#f39c12", fontWeight: 600, fontSize: "0.9rem" }}>
+                      Only {qty} left!
+                    </span>
+                  );
+                }
+                return (
+                  <span style={{ color: "#2ecc71", fontWeight: 600, fontSize: "0.9rem" }}>
+                    In Stock
+                  </span>
+                );
+              })()}
             </div>
 
             {/* Description */}
@@ -214,34 +241,54 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
             {/* Add to Cart */}
             <button
               onClick={handleAddToCart}
+              disabled={(product.stock_quantity ?? 100) === 0}
               style={{
                 width: "100%",
                 padding: "16px",
-                background: "linear-gradient(135deg, #c9a84c, #b8942e)",
-                color: "#0a0a0a",
+                background: (product.stock_quantity ?? 100) === 0
+                  ? "#333"
+                  : "linear-gradient(135deg, #c9a84c, #b8942e)",
+                color: (product.stock_quantity ?? 100) === 0 ? "#666" : "#0a0a0a",
                 border: "none",
                 borderRadius: 10,
                 fontSize: 16,
                 fontWeight: 700,
-                cursor: "pointer",
+                cursor: (product.stock_quantity ?? 100) === 0 ? "not-allowed" : "pointer",
                 marginBottom: 12,
                 letterSpacing: "0.5px",
                 transition: "opacity 0.2s",
               }}
             >
-              Add to Cart
+              {(product.stock_quantity ?? 100) === 0 ? "Out of Stock" : "Add to Cart"}
             </button>
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <a
-                href={getWhatsAppLink(product)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-whatsapp flex-1 text-center"
-              >
-                Order via WhatsApp
-              </a>
+              {(product.stock_quantity ?? 100) > 0 ? (
+                <a
+                  href={getWhatsAppLink(product)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-whatsapp flex-1 text-center"
+                >
+                  Order via WhatsApp
+                </a>
+              ) : (
+                <span
+                  className="flex-1 text-center"
+                  style={{
+                    padding: "14px 16px",
+                    background: "#333",
+                    color: "#666",
+                    borderRadius: 10,
+                    fontSize: 14,
+                    fontWeight: 500,
+                    cursor: "not-allowed",
+                  }}
+                >
+                  Order via WhatsApp
+                </span>
+              )}
               <a
                 href={getEmailLink(product)}
                 className="btn-outline-gold flex-1 text-center"

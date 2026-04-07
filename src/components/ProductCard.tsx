@@ -94,6 +94,25 @@ export default function ProductCard({ product }: ProductCardProps) {
             {product.badge && (
               <span className={`badge ${badgeClass}`}>{product.badge}</span>
             )}
+            {(product.stock_quantity ?? 100) === 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: 10,
+                  left: 10,
+                  background: "#e74c3c",
+                  color: "#fff",
+                  fontSize: "0.65rem",
+                  fontWeight: 700,
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                  zIndex: 2,
+                  letterSpacing: "0.3px",
+                }}
+              >
+                Out of Stock
+              </span>
+            )}
 
             {/* Wishlist Heart */}
             <button

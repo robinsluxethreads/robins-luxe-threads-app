@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Coupon {
   id: number;
@@ -46,6 +48,8 @@ function generateCode(): string {
 }
 
 export default function AdminCouponsPage() {
+  const { user } = useAuth();
+  const adminEmail = user?.email || "admin";
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -120,6 +124,13 @@ export default function AdminCouponsPage() {
     if (result.error) {
       setError(result.error.message);
     } else {
+      await logActivity(
+        adminEmail,
+        editingId ? "updated" : "created",
+        "coupon",
+        editingId ? String(editingId) : undefined,
+        { code: payload.code }
+      );
       setShowModal(false);
       fetchCoupons();
     }
@@ -129,7 +140,9 @@ export default function AdminCouponsPage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this coupon?")) return;
+    const coupon = coupons.find((c) => c.id === id);
     await supabase.from("coupons").delete().eq("id", id);
+    await logActivity(adminEmail, "deleted", "coupon", String(id), { code: coupon?.code });
     fetchCoupons();
   };
 
@@ -138,6 +151,10 @@ export default function AdminCouponsPage() {
       .from("coupons")
       .update({ is_active: !coupon.is_active })
       .eq("id", coupon.id);
+    await logActivity(adminEmail, "status_changed", "coupon", String(coupon.id), {
+      code: coupon.code,
+      is_active: !coupon.is_active,
+    });
     fetchCoupons();
   };
 

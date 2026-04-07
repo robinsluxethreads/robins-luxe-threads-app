@@ -26,6 +26,24 @@ interface CategoryCount {
   count: number;
 }
 
+interface LowStockProduct {
+  id: string;
+  name: string;
+  category: string;
+  stock_quantity: number;
+  low_stock_threshold: number;
+}
+
+interface ActivityEntry {
+  id: string;
+  admin_email: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
 interface Stats {
   totalProducts: number;
   totalOrders: number;
@@ -34,6 +52,10 @@ interface Stats {
   pendingOrders: number;
   totalSubscribers: number;
   totalReviews: number;
+  ordersToday: number;
+  revenueToday: number;
+  ordersYesterday: number;
+  revenueYesterday: number;
 }
 
 // Animated number counter hook
@@ -76,6 +98,29 @@ function AnimatedStat({ value, prefix = "" }: { value: number; prefix?: string }
   );
 }
 
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffSec < 60) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+const actionColors: Record<string, string> = {
+  created: "#2ecc71",
+  updated: "#3498db",
+  deleted: "#e74c3c",
+  status_changed: "#f39c12",
+};
+
 export default function AdminDashboard() {
   const [stats, setStats] = useState<Stats>({
     totalProducts: 0,
@@ -85,14 +130,25 @@ export default function AdminDashboard() {
     pendingOrders: 0,
     totalSubscribers: 0,
     totalReviews: 0,
+    ordersToday: 0,
+    revenueToday: 0,
+    ordersYesterday: 0,
+    revenueYesterday: 0,
   });
   const [recentOrders, setRecentOrders] = useState<OrderRow[]>([]);
   const [dailyData, setDailyData] = useState<DayData[]>([]);
   const [categoryData, setCategoryData] = useState<CategoryCount[]>([]);
+  const [lowStockProducts, setLowStockProducts] = useState<LowStockProduct[]>([]);
+  const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchDashboardData = useCallback(async () => {
     try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split("T")[0];
+
       const [
         { count: productCount },
         { count: orderCount },
@@ -102,6 +158,8 @@ export default function AdminDashboard() {
         { count: subscriberCount },
         { data: products },
         { count: reviewCount },
+        { data: lowStockData },
+        { data: activityData },
       ] = await Promise.all([
         supabase.from("products").select("*", { count: "exact", head: true }),
         supabase.from("orders").select("*", { count: "exact", head: true }),
@@ -114,12 +172,31 @@ export default function AdminDashboard() {
         supabase.from("subscribers").select("*", { count: "exact", head: true }),
         supabase.from("products").select("category"),
         supabase.from("reviews").select("*", { count: "exact", head: true }),
+        supabase
+          .from("products")
+          .select("id, name, category, stock_quantity, low_stock_threshold")
+          .or("stock_quantity.lte.low_stock_threshold,stock_quantity.eq.0")
+          .order("stock_quantity", { ascending: true })
+          .limit(20),
+        supabase
+          .from("activity_log")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(5),
       ]);
 
       const allOrders = orders || [];
       const totalRevenue = allOrders.reduce(
         (sum, o) => sum + (o.total || 0),
         0
+      );
+
+      // Today's stats
+      const todayOrders = allOrders.filter(
+        (o) => o.created_at?.split("T")[0] === todayStr
+      );
+      const yesterdayOrders = allOrders.filter(
+        (o) => o.created_at?.split("T")[0] === yesterdayStr
       );
 
       setStats({
@@ -130,9 +207,23 @@ export default function AdminDashboard() {
         pendingOrders: pendingCount || 0,
         totalSubscribers: subscriberCount || 0,
         totalReviews: reviewCount || 0,
+        ordersToday: todayOrders.length,
+        revenueToday: todayOrders.reduce((s, o) => s + (o.total || 0), 0),
+        ordersYesterday: yesterdayOrders.length,
+        revenueYesterday: yesterdayOrders.reduce((s, o) => s + (o.total || 0), 0),
       });
 
       setRecentOrders(allOrders.slice(0, 10));
+
+      // Filter low stock products properly (client side to be safe)
+      const lowStock = (lowStockData || []).filter((p) => {
+        const qty = p.stock_quantity ?? 100;
+        const threshold = p.low_stock_threshold ?? 10;
+        return qty <= threshold;
+      });
+      setLowStockProducts(lowStock);
+
+      setRecentActivity(activityData || []);
 
       // Build last 7 days data
       const days: DayData[] = [];
@@ -182,6 +273,13 @@ export default function AdminDashboard() {
   const formatCurrency = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 0 });
 
+  function getTrendArrow(current: number, previous: number): { arrow: string; color: string } | null {
+    if (previous === 0 && current === 0) return null;
+    if (current > previous) return { arrow: "↑", color: "#2ecc71" };
+    if (current < previous) return { arrow: "↓", color: "#e74c3c" };
+    return { arrow: "→", color: "#888" };
+  }
+
   const statCards = [
     { label: "Total Products", value: stats.totalProducts, icon: "👗", isPrice: false },
     { label: "Total Orders", value: stats.totalOrders, icon: "📦", isPrice: false },
@@ -227,6 +325,9 @@ export default function AdminDashboard() {
   const maxOrders = Math.max(...dailyData.map((d) => d.orders), 1);
   const maxCatCount = Math.max(...categoryData.map((c) => c.count), 1);
 
+  const ordersTrend = getTrendArrow(stats.ordersToday, stats.ordersYesterday);
+  const revenueTrend = getTrendArrow(stats.revenueToday, stats.revenueYesterday);
+
   return (
     <div>
       <h1
@@ -239,6 +340,110 @@ export default function AdminDashboard() {
       >
         Dashboard Overview
       </h1>
+
+      {/* Today's Highlights */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: "1rem",
+          marginBottom: "1.5rem",
+        }}
+      >
+        <div
+          style={{
+            background: "linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.05))",
+            border: "1px solid rgba(201,168,76,0.3)",
+            borderRadius: 12,
+            padding: "1.25rem",
+          }}
+        >
+          <div style={{ fontSize: "0.75rem", color: "#c9a84c", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+            Today{"'"}s Orders
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "1.75rem", fontWeight: 700, color: "#ededed" }}>
+              {stats.ordersToday}
+            </span>
+            {ordersTrend && (
+              <span style={{ color: ordersTrend.color, fontSize: "0.85rem", fontWeight: 600 }}>
+                {ordersTrend.arrow} vs yesterday
+              </span>
+            )}
+          </div>
+        </div>
+        <div
+          style={{
+            background: "linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.05))",
+            border: "1px solid rgba(201,168,76,0.3)",
+            borderRadius: 12,
+            padding: "1.25rem",
+          }}
+        >
+          <div style={{ fontSize: "0.75rem", color: "#c9a84c", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+            Today{"'"}s Revenue
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: "1.75rem", fontWeight: 700, color: "#ededed" }}>
+              {formatCurrency(stats.revenueToday)}
+            </span>
+            {revenueTrend && (
+              <span style={{ color: revenueTrend.color, fontSize: "0.85rem", fontWeight: 600 }}>
+                {revenueTrend.arrow} vs yesterday
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div style={{ display: "flex", gap: 8, marginBottom: "1.5rem", flexWrap: "wrap" }}>
+        <Link
+          href="/admin/products"
+          style={{
+            padding: "0.5rem 1rem",
+            background: "#c9a84c22",
+            color: "#c9a84c",
+            border: "1px solid #c9a84c44",
+            borderRadius: 8,
+            textDecoration: "none",
+            fontSize: "0.8rem",
+            fontWeight: 500,
+          }}
+        >
+          + Add Product
+        </Link>
+        <Link
+          href="/admin/orders"
+          style={{
+            padding: "0.5rem 1rem",
+            background: "#3498db22",
+            color: "#3498db",
+            border: "1px solid #3498db44",
+            borderRadius: 8,
+            textDecoration: "none",
+            fontSize: "0.8rem",
+            fontWeight: 500,
+          }}
+        >
+          View Orders
+        </Link>
+        <Link
+          href="/admin/messages"
+          style={{
+            padding: "0.5rem 1rem",
+            background: "#2ecc7122",
+            color: "#2ecc71",
+            border: "1px solid #2ecc7144",
+            borderRadius: 8,
+            textDecoration: "none",
+            fontSize: "0.8rem",
+            fontWeight: 500,
+          }}
+        >
+          Check Messages
+        </Link>
+      </div>
 
       {/* Stats Grid */}
       <div
@@ -491,170 +696,365 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Recent Orders */}
-      <div
-        style={{
-          background: "#1a1a1a",
-          border: "1px solid #2a2a2a",
-          borderRadius: 12,
-          overflow: "hidden",
-        }}
-      >
+      {/* Low Stock Products */}
+      {lowStockProducts.length > 0 && (
         <div
           style={{
-            padding: "1rem 1.25rem",
-            borderBottom: "1px solid #2a2a2a",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            background: "#1a1a1a",
+            border: "1px solid #2a2a2a",
+            borderRadius: 12,
+            overflow: "hidden",
+            marginBottom: "2rem",
           }}
         >
-          <h2
+          <div
             style={{
-              fontFamily: "'Playfair Display', serif",
-              fontSize: "1.1rem",
-              color: "#ededed",
-              margin: 0,
+              padding: "1rem 1.25rem",
+              borderBottom: "1px solid #2a2a2a",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
             }}
           >
-            Recent Orders
-          </h2>
-          <Link
-            href="/admin/orders"
-            style={{
-              fontSize: "0.8rem",
-              color: "#c9a84c",
-              textDecoration: "none",
-            }}
-          >
-            View All →
-          </Link>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: "0.85rem",
-            }}
-          >
-            <thead>
-              <tr
-                style={{
-                  borderBottom: "1px solid #2a2a2a",
-                  color: "#888",
-                  textAlign: "left",
-                }}
-              >
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Order #
-                </th>
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Customer
-                </th>
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Total
-                </th>
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Payment
-                </th>
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Status
-                </th>
-                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
-                  Date
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentOrders.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{
-                      padding: "2rem",
-                      textAlign: "center",
-                      color: "#888",
-                    }}
-                  >
-                    No orders yet
-                  </td>
+            <h2
+              style={{
+                fontFamily: "'Playfair Display', serif",
+                fontSize: "1.1rem",
+                color: "#f39c12",
+                margin: 0,
+              }}
+            >
+              Low Stock Products
+            </h2>
+            <Link
+              href="/admin/products"
+              style={{ fontSize: "0.8rem", color: "#c9a84c", textDecoration: "none" }}
+            >
+              Manage Products →
+            </Link>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #2a2a2a", color: "#888", textAlign: "left" }}>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Product Name</th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Category</th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Current Stock</th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>Threshold</th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}></th>
                 </tr>
-              ) : (
-                recentOrders.map((order) => (
-                  <tr
-                    key={order.id}
-                    style={{
-                      borderBottom: "1px solid #1f1f1f",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseOver={(e) =>
-                      (e.currentTarget.style.background = "#222")
-                    }
-                    onMouseOut={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                  >
-                    <td
+              </thead>
+              <tbody>
+                {lowStockProducts.map((p) => {
+                  const isOutOfStock = (p.stock_quantity ?? 0) === 0;
+                  return (
+                    <tr
+                      key={p.id}
                       style={{
-                        padding: "0.75rem 1rem",
-                        color: "#c9a84c",
-                        fontWeight: 600,
+                        borderBottom: "1px solid #1f1f1f",
+                        background: isOutOfStock ? "rgba(231,76,60,0.05)" : "rgba(243,156,18,0.03)",
                       }}
                     >
-                      {order.order_number}
-                    </td>
-                    <td style={{ padding: "0.75rem 1rem", color: "#ddd" }}>
-                      {order.customer_name}
-                    </td>
-                    <td style={{ padding: "0.75rem 1rem", color: "#ddd" }}>
-                      {formatCurrency(order.total)}
-                    </td>
-                    <td style={{ padding: "0.75rem 1rem" }}>
-                      <span
-                        style={{
-                          padding: "3px 10px",
-                          borderRadius: 12,
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          background:
-                            (paymentColor[order.payment_status] || "#888") +
-                            "22",
-                          color:
-                            paymentColor[order.payment_status] || "#888",
-                        }}
-                      >
-                        {order.payment_status}
+                      <td style={{ padding: "0.75rem 1rem", color: "#ededed", fontWeight: 500 }}>
+                        {p.name}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem", color: "#aaa" }}>
+                        {p.category}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem" }}>
+                        <span
+                          style={{
+                            padding: "3px 10px",
+                            borderRadius: 12,
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background: isOutOfStock ? "#e74c3c22" : "#f39c1222",
+                            color: isOutOfStock ? "#e74c3c" : "#f39c12",
+                          }}
+                        >
+                          {p.stock_quantity ?? 0}
+                        </span>
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem", color: "#888" }}>
+                        {p.low_stock_threshold ?? 10}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem" }}>
+                        <Link
+                          href="/admin/products"
+                          style={{
+                            padding: "4px 10px",
+                            background: "#c9a84c22",
+                            color: "#c9a84c",
+                            borderRadius: 6,
+                            fontSize: "0.75rem",
+                            fontWeight: 500,
+                            textDecoration: "none",
+                          }}
+                        >
+                          Edit
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Activity + Recent Orders side by side */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))",
+          gap: "1rem",
+        }}
+      >
+        {/* Recent Activity Feed */}
+        <div
+          style={{
+            background: "#1a1a1a",
+            border: "1px solid #2a2a2a",
+            borderRadius: 12,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "1rem 1.25rem",
+              borderBottom: "1px solid #2a2a2a",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <h2
+              style={{
+                fontFamily: "'Playfair Display', serif",
+                fontSize: "1.1rem",
+                color: "#ededed",
+                margin: 0,
+              }}
+            >
+              Recent Activity
+            </h2>
+            <Link
+              href="/admin/activity"
+              style={{ fontSize: "0.8rem", color: "#c9a84c", textDecoration: "none" }}
+            >
+              View All →
+            </Link>
+          </div>
+          <div>
+            {recentActivity.length === 0 ? (
+              <div style={{ padding: "2rem", textAlign: "center", color: "#888", fontSize: "0.85rem" }}>
+                No activity recorded yet
+              </div>
+            ) : (
+              recentActivity.map((entry) => (
+                <div
+                  key={entry.id}
+                  style={{
+                    padding: "0.75rem 1.25rem",
+                    borderBottom: "1px solid #1f1f1f",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: actionColors[entry.action] || "#888",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "0.8rem", color: "#ccc" }}>
+                      <span style={{ color: actionColors[entry.action] || "#888", fontWeight: 600, textTransform: "capitalize" }}>
+                        {entry.action.replace("_", " ")}
                       </span>
-                    </td>
-                    <td style={{ padding: "0.75rem 1rem" }}>
-                      <span
-                        style={{
-                          padding: "3px 10px",
-                          borderRadius: 12,
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          background:
-                            (statusColor[order.order_status] || "#888") +
-                            "22",
-                          color: statusColor[order.order_status] || "#888",
-                        }}
-                      >
-                        {order.order_status}
-                      </span>
-                    </td>
-                    <td style={{ padding: "0.75rem 1rem", color: "#888" }}>
-                      {new Date(order.created_at).toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                      })}
+                      {" "}
+                      <span style={{ color: "#888", textTransform: "capitalize" }}>{entry.entity_type}</span>
+                    </div>
+                    <div style={{ fontSize: "0.7rem", color: "#666", marginTop: 2 }}>
+                      {entry.admin_email} - {timeAgo(entry.created_at)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Recent Orders */}
+        <div
+          style={{
+            background: "#1a1a1a",
+            border: "1px solid #2a2a2a",
+            borderRadius: 12,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "1rem 1.25rem",
+              borderBottom: "1px solid #2a2a2a",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <h2
+              style={{
+                fontFamily: "'Playfair Display', serif",
+                fontSize: "1.1rem",
+                color: "#ededed",
+                margin: 0,
+              }}
+            >
+              Recent Orders
+            </h2>
+            <Link
+              href="/admin/orders"
+              style={{
+                fontSize: "0.8rem",
+                color: "#c9a84c",
+                textDecoration: "none",
+              }}
+            >
+              View All →
+            </Link>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.85rem",
+              }}
+            >
+              <thead>
+                <tr
+                  style={{
+                    borderBottom: "1px solid #2a2a2a",
+                    color: "#888",
+                    textAlign: "left",
+                  }}
+                >
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Order #
+                  </th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Customer
+                  </th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Total
+                  </th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Payment
+                  </th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Status
+                  </th>
+                  <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                    Date
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentOrders.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      style={{
+                        padding: "2rem",
+                        textAlign: "center",
+                        color: "#888",
+                      }}
+                    >
+                      No orders yet
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  recentOrders.map((order) => (
+                    <tr
+                      key={order.id}
+                      style={{
+                        borderBottom: "1px solid #1f1f1f",
+                        transition: "background 0.15s",
+                      }}
+                      onMouseOver={(e) =>
+                        (e.currentTarget.style.background = "#222")
+                      }
+                      onMouseOut={(e) =>
+                        (e.currentTarget.style.background = "transparent")
+                      }
+                    >
+                      <td
+                        style={{
+                          padding: "0.75rem 1rem",
+                          color: "#c9a84c",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {order.order_number}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem", color: "#ddd" }}>
+                        {order.customer_name}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem", color: "#ddd" }}>
+                        {formatCurrency(order.total)}
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem" }}>
+                        <span
+                          style={{
+                            padding: "3px 10px",
+                            borderRadius: 12,
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background:
+                              (paymentColor[order.payment_status] || "#888") +
+                              "22",
+                            color:
+                              paymentColor[order.payment_status] || "#888",
+                          }}
+                        >
+                          {order.payment_status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem" }}>
+                        <span
+                          style={{
+                            padding: "3px 10px",
+                            borderRadius: 12,
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background:
+                              (statusColor[order.order_status] || "#888") +
+                              "22",
+                            color: statusColor[order.order_status] || "#888",
+                          }}
+                        >
+                          {order.order_status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "0.75rem 1rem", color: "#888" }}>
+                        {new Date(order.created_at).toLocaleDateString("en-IN", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

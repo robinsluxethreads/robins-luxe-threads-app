@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { downloadCSV } from "@/lib/csvExport";
+import { logActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 import ImageUpload from "@/components/ImageUpload";
+import Link from "next/link";
 
 interface Product {
   id: string;
@@ -17,6 +20,8 @@ interface Product {
   emoji: string | null;
   images: string[];
   is_active: boolean;
+  stock_quantity: number;
+  low_stock_threshold: number;
 }
 
 interface Category {
@@ -39,9 +44,16 @@ const emptyProduct: Omit<Product, "id"> = {
   emoji: null,
   images: [],
   is_active: true,
+  stock_quantity: 100,
+  low_stock_threshold: 10,
 };
 
+type SortOption = "newest" | "low_stock";
+
 export default function AdminProducts() {
+  const { user } = useAuth();
+  const adminEmail = user?.email || "admin";
+
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +65,7 @@ export default function AdminProducts() {
   const [form, setForm] = useState<Omit<Product, "id">>(emptyProduct);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
 
   // Bulk operations state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -62,9 +75,15 @@ export default function AdminProducts() {
     setLoading(true);
     let query = supabase
       .from("products")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      .select("*", { count: "exact" });
+
+    if (sortBy === "low_stock") {
+      query = query.order("stock_quantity", { ascending: true });
+    } else {
+      query = query.order("created_at", { ascending: false });
+    }
+
+    query = query.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
     if (search) {
       query = query.ilike("name", `%${search}%`);
@@ -74,7 +93,7 @@ export default function AdminProducts() {
     setProducts(data || []);
     setTotal(count || 0);
     setLoading(false);
-  }, [page, search]);
+  }, [page, search, sortBy]);
 
   useEffect(() => {
     fetchProducts();
@@ -112,6 +131,8 @@ export default function AdminProducts() {
       emoji: p.emoji,
       images: p.images || [],
       is_active: p.is_active,
+      stock_quantity: p.stock_quantity ?? 100,
+      low_stock_threshold: p.low_stock_threshold ?? 10,
     });
     setShowModal(true);
   }
@@ -125,9 +146,11 @@ export default function AdminProducts() {
           .update(form)
           .eq("id", editingProduct.id);
         if (error) throw error;
+        await logActivity(adminEmail, "updated", "product", editingProduct.id, { name: form.name });
       } else {
-        const { error } = await supabase.from("products").insert([form]);
+        const { data, error } = await supabase.from("products").insert([form]).select("id").single();
         if (error) throw error;
+        await logActivity(adminEmail, "created", "product", data?.id, { name: form.name });
       }
       setShowModal(false);
       fetchProducts();
@@ -139,11 +162,13 @@ export default function AdminProducts() {
   }
 
   async function handleDelete(id: string) {
+    const product = products.find((p) => p.id === id);
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) {
       alert("Error deleting: " + error.message);
     } else {
       setDeleteConfirm(null);
+      await logActivity(adminEmail, "deleted", "product", id, { name: product?.name });
       fetchProducts();
     }
   }
@@ -153,6 +178,7 @@ export default function AdminProducts() {
       .from("products")
       .update({ is_active: !current })
       .eq("id", id);
+    await logActivity(adminEmail, "status_changed", "product", id, { is_active: !current });
     fetchProducts();
   }
 
@@ -190,6 +216,7 @@ export default function AdminProducts() {
     if (error) {
       alert("Error deleting: " + error.message);
     } else {
+      await logActivity(adminEmail, "deleted", "product", undefined, { count: ids.length, ids });
       setSelectedIds(new Set());
       setBulkDeleteConfirm(false);
       fetchProducts();
@@ -217,12 +244,31 @@ export default function AdminProducts() {
       Price: p.price,
       "Old Price": p.old_price || "",
       Badge: p.badge || "",
-      Sizes: (p.sizes || []).join("; "),
+      Emoji: p.emoji || "",
+      Sizes: (p.sizes || []).join(", "),
+      "Stock Quantity": p.stock_quantity ?? "",
+      "Low Stock Threshold": p.low_stock_threshold ?? "",
       Status: p.is_active ? "Active" : "Inactive",
       Description: p.description || "",
       Images: (p.images || []).join("; "),
     }));
     downloadCSV(csvData, "products");
+  }
+
+  function getStockColor(p: Product): string {
+    const qty = p.stock_quantity ?? 100;
+    const threshold = p.low_stock_threshold ?? 10;
+    if (qty === 0) return "#e74c3c";
+    if (qty <= threshold) return "#f39c12";
+    return "#2ecc71";
+  }
+
+  function getStockLabel(p: Product): string {
+    const qty = p.stock_quantity ?? 100;
+    const threshold = p.low_stock_threshold ?? 10;
+    if (qty === 0) return "Out of Stock";
+    if (qty <= threshold) return `Low: ${qty}`;
+    return String(qty);
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
@@ -284,6 +330,9 @@ export default function AdminProducts() {
           Products
         </h1>
         <div style={{ display: "flex", gap: 8 }}>
+          <Link href="/admin/products/import" style={{ textDecoration: "none" }}>
+            <button style={outlineBtnStyle}>Import Products</button>
+          </Link>
           <button onClick={handleExportCSV} style={outlineBtnStyle}>
             Export CSV
           </button>
@@ -306,8 +355,8 @@ export default function AdminProducts() {
         </div>
       </div>
 
-      {/* Search */}
-      <div style={{ marginBottom: "1rem" }}>
+      {/* Search and Sort */}
+      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem", flexWrap: "wrap", alignItems: "center" }}>
         <input
           placeholder="Search products..."
           value={search}
@@ -319,6 +368,18 @@ export default function AdminProducts() {
           onFocus={(e) => (e.target.style.borderColor = "#c9a84c")}
           onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
         />
+        <select
+          value={sortBy}
+          onChange={(e) => { setSortBy(e.target.value as SortOption); setPage(0); }}
+          style={{
+            ...inputStyle,
+            maxWidth: 200,
+            cursor: "pointer",
+          }}
+        >
+          <option value="newest">Sort: Newest First</option>
+          <option value="low_stock">Sort: Low Stock First</option>
+        </select>
       </div>
 
       {/* Bulk action bar */}
@@ -471,6 +532,9 @@ export default function AdminProducts() {
                   Price
                 </th>
                 <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
+                  Stock
+                </th>
+                <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
                   Badge
                 </th>
                 <th style={{ padding: "0.75rem 1rem", fontWeight: 500 }}>
@@ -484,13 +548,13 @@ export default function AdminProducts() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
+                  <td colSpan={9} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
                     Loading...
                   </td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
+                  <td colSpan={9} style={{ padding: "2rem", textAlign: "center", color: "#888" }}>
                     No products found
                   </td>
                 </tr>
@@ -563,6 +627,20 @@ export default function AdminProducts() {
                           ₹{p.old_price.toLocaleString("en-IN")}
                         </span>
                       )}
+                    </td>
+                    <td style={{ padding: "0.75rem 1rem" }}>
+                      <span
+                        style={{
+                          padding: "3px 10px",
+                          borderRadius: 12,
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          background: getStockColor(p) + "22",
+                          color: getStockColor(p),
+                        }}
+                      >
+                        {getStockLabel(p)}
+                      </span>
                     </td>
                     <td style={{ padding: "0.75rem 1rem" }}>
                       {p.badge ? (
@@ -795,7 +873,7 @@ export default function AdminProducts() {
 
               {/* Price */}
               <div>
-                <label style={labelStyle}>Price (₹) *</label>
+                <label style={labelStyle}>Price (Rs) *</label>
                 <input
                   style={inputStyle}
                   type="number"
@@ -811,7 +889,7 @@ export default function AdminProducts() {
 
               {/* Old Price */}
               <div>
-                <label style={labelStyle}>Old Price (₹)</label>
+                <label style={labelStyle}>Old Price (Rs)</label>
                 <input
                   style={inputStyle}
                   type="number"
@@ -868,6 +946,40 @@ export default function AdminProducts() {
                 </select>
               </div>
 
+              {/* Stock Quantity */}
+              <div>
+                <label style={labelStyle}>Stock Quantity</label>
+                <input
+                  style={inputStyle}
+                  type="number"
+                  min="0"
+                  value={form.stock_quantity}
+                  onChange={(e) =>
+                    setForm({ ...form, stock_quantity: Number(e.target.value) || 0 })
+                  }
+                  placeholder="100"
+                  onFocus={(e) => (e.target.style.borderColor = "#c9a84c")}
+                  onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
+                />
+              </div>
+
+              {/* Low Stock Threshold */}
+              <div>
+                <label style={labelStyle}>Low Stock Threshold</label>
+                <input
+                  style={inputStyle}
+                  type="number"
+                  min="0"
+                  value={form.low_stock_threshold}
+                  onChange={(e) =>
+                    setForm({ ...form, low_stock_threshold: Number(e.target.value) || 0 })
+                  }
+                  placeholder="10"
+                  onFocus={(e) => (e.target.style.borderColor = "#c9a84c")}
+                  onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
+                />
+              </div>
+
               {/* Emoji */}
               <div>
                 <label style={labelStyle}>Emoji</label>
@@ -877,7 +989,7 @@ export default function AdminProducts() {
                   onChange={(e) =>
                     setForm({ ...form, emoji: e.target.value || null })
                   }
-                  placeholder="e.g. 👗"
+                  placeholder="e.g. dress emoji"
                   onFocus={(e) => (e.target.style.borderColor = "#c9a84c")}
                   onBlur={(e) => (e.target.style.borderColor = "#2a2a2a")}
                 />

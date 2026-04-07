@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     const productIds = items.map((item: { productId: number }) => item.productId);
     const { data: dbProducts, error: dbError } = await supabase
       .from("products")
-      .select("id, price, name, is_active")
+      .select("id, price, name, is_active, stock_quantity")
       .in("id", productIds);
 
     if (dbError || !dbProducts) {
@@ -108,6 +108,20 @@ export async function POST(request: Request) {
       if (!dbProduct.is_active) {
         return NextResponse.json(
           { error: `Product is no longer available: ${dbProduct.name}` },
+          { status: 400 }
+        );
+      }
+      const stock = dbProduct.stock_quantity ?? 100;
+      const qty = Math.max(1, Math.min(item.quantity || 1, 99));
+      if (stock === 0) {
+        return NextResponse.json(
+          { error: `${dbProduct.name} is out of stock` },
+          { status: 400 }
+        );
+      }
+      if (qty > stock) {
+        return NextResponse.json(
+          { error: `Only ${stock} units of ${dbProduct.name} available` },
           { status: 400 }
         );
       }
@@ -155,6 +169,19 @@ export async function POST(request: Request) {
         { error: "Failed to place order" },
         { status: 500 }
       );
+    }
+
+    // Decrement stock for each item
+    for (const item of items) {
+      const dbProduct = productMap.get(item.productId);
+      if (dbProduct) {
+        const qty = Math.max(1, Math.min(item.quantity || 1, 99));
+        const currentStock = dbProduct.stock_quantity ?? 100;
+        await supabaseAdmin
+          .from("products")
+          .update({ stock_quantity: Math.max(0, currentStock - qty) })
+          .eq("id", item.productId);
+      }
     }
 
     return NextResponse.json({
