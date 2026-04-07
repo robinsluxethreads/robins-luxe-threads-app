@@ -1,11 +1,17 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Product } from "@/lib/utils";
 import { formatPrice, getWhatsAppLink, getEmailLink } from "@/lib/utils";
 import { useCart } from "@/contexts/CartContext";
+import { useWishlist } from "@/contexts/WishlistContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import ProductCard from "./ProductCard";
+import ProductReviews from "./ProductReviews";
+import StarRating from "./StarRating";
 import Toast from "./Toast";
+import { trackEvent } from "@/lib/analytics";
 
 interface ProductDetailProps {
   product: Product;
@@ -17,6 +23,29 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
   const [selectedImage, setSelectedImage] = useState(0);
   const [toast, setToast] = useState({ show: false, message: "", isError: false });
   const { addToCart } = useCart();
+  const { isInWishlist, addToWishlist, removeFromWishlist } = useWishlist();
+  const { user } = useAuth();
+  const wishlisted = isInWishlist(product.id);
+
+  const [avgRating, setAvgRating] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
+
+  useEffect(() => {
+    fetchRating();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.id]);
+
+  const fetchRating = async () => {
+    const { data } = await supabase
+      .from("reviews")
+      .select("rating")
+      .eq("product_id", product.id);
+    if (data && data.length > 0) {
+      const avg = data.reduce((sum, r) => sum + r.rating, 0) / data.length;
+      setAvgRating(avg);
+      setReviewCount(data.length);
+    }
+  };
 
   const handleAddToCart = () => {
     if (product.sizes && product.sizes.length > 0 && !selectedSize) {
@@ -31,7 +60,23 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
       emoji: product.emoji,
       image: product.images?.[0] || null,
     });
+    trackEvent("add_to_cart", "ecommerce", product.name, product.price);
     setToast({ show: true, message: "Added to cart!", isError: false });
+  };
+
+  const handleWishlistToggle = () => {
+    if (!user) {
+      setToast({ show: true, message: "Login to save to wishlist", isError: true });
+      return;
+    }
+    if (wishlisted) {
+      removeFromWishlist(product.id);
+      setToast({ show: true, message: "Removed from wishlist", isError: false });
+    } else {
+      addToWishlist(product.id);
+      trackEvent("add_to_wishlist", "ecommerce", product.name, product.price);
+      setToast({ show: true, message: "Added to wishlist!", isError: false });
+    }
   };
 
   const closeToast = useCallback(() => {
@@ -71,7 +116,7 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-8xl">
-                  {product.emoji || "👗"}
+                  {product.emoji || "---"}
                 </div>
               )}
             </div>
@@ -105,11 +150,21 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
               {product.category}
             </p>
             <h1
-              className="text-3xl sm:text-4xl font-bold mb-4 text-white"
+              className="text-3xl sm:text-4xl font-bold mb-2 text-white"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
               {product.name}
             </h1>
+
+            {/* Rating below name */}
+            {reviewCount > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                <StarRating rating={Math.round(avgRating)} size="medium" />
+                <span style={{ fontSize: 14, color: "#888" }}>
+                  {avgRating.toFixed(1)} ({reviewCount} review{reviewCount !== 1 ? "s" : ""})
+                </span>
+              </div>
+            )}
 
             {/* Price */}
             <div className="flex items-center gap-3 mb-8">
@@ -178,7 +233,7 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
             </button>
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-8">
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
               <a
                 href={getWhatsAppLink(product)}
                 target="_blank"
@@ -194,6 +249,42 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
                 Enquire via Email
               </a>
             </div>
+
+            {/* Save to Wishlist Button */}
+            <button
+              onClick={handleWishlistToggle}
+              style={{
+                width: "100%",
+                padding: "14px 16px",
+                background: "transparent",
+                border: "1px solid #333",
+                borderRadius: 10,
+                color: wishlisted ? "#c9a84c" : "#999",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                marginBottom: 32,
+                transition: "all 0.2s",
+              }}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill={wishlisted ? "#c9a84c" : "none"}
+                stroke={wishlisted ? "#c9a84c" : "currentColor"}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+              </svg>
+              {wishlisted ? "Saved to Wishlist" : "Save to Wishlist"}
+            </button>
 
             {/* Share */}
             <div className="mb-8">
@@ -229,7 +320,7 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
                   X
                 </a>
                 <button onClick={handleCopyLink} className="share-btn" title="Copy Link">
-                  🔗
+                  Link
                 </button>
               </div>
             </div>
@@ -240,6 +331,9 @@ export default function ProductDetail({ product, relatedProducts }: ProductDetai
             </p>
           </div>
         </div>
+
+        {/* Reviews Section */}
+        <ProductReviews productId={product.id} />
 
         {/* Related Products */}
         {relatedProducts.length > 0 && (

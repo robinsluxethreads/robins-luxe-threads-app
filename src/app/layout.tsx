@@ -3,6 +3,8 @@ import { Playfair_Display, Poppins } from "next/font/google";
 import LayoutShell from "@/components/LayoutShell";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CartProvider } from "@/contexts/CartContext";
+import { WishlistProvider } from "@/contexts/WishlistContext";
+import Analytics from "@/components/Analytics";
 import "./globals.css";
 
 const playfair = Playfair_Display({
@@ -33,6 +35,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${playfair.variable} ${poppins.variable}`}>
+      <head>
+        <Analytics />
+      </head>
       <body
         className="min-h-screen flex flex-col"
         style={{
@@ -43,7 +48,9 @@ export default function RootLayout({
       >
         <AuthProvider>
           <CartProvider>
-            <LayoutShell>{children}</LayoutShell>
+            <WishlistProvider>
+              <LayoutShell>{children}</LayoutShell>
+            </WishlistProvider>
           </CartProvider>
         </AuthProvider>
       </body>

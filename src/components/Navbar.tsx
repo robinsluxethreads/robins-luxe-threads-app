@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
+import { useWishlist } from "@/contexts/WishlistContext";
 import { ADMIN_EMAILS } from "@/lib/constants";
 
 export default function Navbar() {
@@ -13,7 +14,9 @@ export default function Navbar() {
   const pathname = usePathname();
   const { user, loading } = useAuth();
   const { getCartCount } = useCart();
+  const { getWishlistCount } = useWishlist();
   const cartCount = getCartCount();
+  const wishlistCount = getWishlistCount();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -113,6 +116,48 @@ export default function Navbar() {
                   </Link>
                 )
               )}
+              {/* Wishlist Icon */}
+              <Link
+                href="/wishlist"
+                className={`nav-link ${pathname === "/wishlist" ? "active" : ""}`}
+                style={{ position: "relative", display: "flex", alignItems: "center" }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+                </svg>
+                {wishlistCount > 0 && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: -6,
+                      right: -10,
+                      background: "#c9a84c",
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      width: 18,
+                      height: 18,
+                      borderRadius: "50%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {wishlistCount > 99 ? "99+" : wishlistCount}
+                  </span>
+                )}
+              </Link>
+              {/* Cart Icon */}
               <Link
                 href="/cart"
                 className={`nav-link ${pathname === "/cart" ? "active" : ""}`}
@@ -190,6 +235,22 @@ export default function Navbar() {
             <Link href="/auth/login">Login</Link>
           )
         )}
+        <Link href="/wishlist" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          Wishlist {wishlistCount > 0 && (
+            <span
+              style={{
+                background: "#c9a84c",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "2px 7px",
+                borderRadius: 10,
+              }}
+            >
+              {wishlistCount}
+            </span>
+          )}
+        </Link>
         <Link href="/cart" style={{ display: "flex", alignItems: "center", gap: 8 }}>
           Cart {cartCount > 0 && (
             <span

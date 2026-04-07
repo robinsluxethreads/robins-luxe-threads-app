@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/admin/customers", label: "Customers", icon: "👥" },
   { href: "/admin/messages", label: "Messages", icon: "✉️" },
   { href: "/admin/subscribers", label: "Subscribers", icon: "📧" },
+  { href: "/admin/coupons", label: "Coupons", icon: "🏷️" },
   { href: "/admin/settings", label: "Settings", icon: "⚙️" },
 ];
 

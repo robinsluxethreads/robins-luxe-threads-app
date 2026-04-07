@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/contexts/CartContext";
@@ -11,10 +12,57 @@ export default function CartPage() {
   const { user } = useAuth();
   const router = useRouter();
 
+  // Coupon state
+  const [couponCode, setCouponCode] = useState("");
+  const [couponDiscount, setCouponDiscount] = useState(0);
+  const [couponMessage, setCouponMessage] = useState("");
+  const [couponValid, setCouponValid] = useState(false);
+  const [couponDetailsCode, setCouponDetailsCode] = useState("");
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
+
   const subtotal = getCartTotal();
   const shipping = subtotal >= 5000 ? 0 : 99;
   const tax = 0;
-  const total = subtotal + shipping + tax;
+  const total = subtotal + shipping + tax - couponDiscount;
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setApplyingCoupon(true);
+    setCouponMessage("");
+
+    try {
+      const res = await fetch("/api/validate-coupon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: couponCode.trim(), subtotal }),
+      });
+      const data = await res.json();
+
+      if (data.valid) {
+        setCouponDiscount(data.discount);
+        setCouponValid(true);
+        setCouponDetailsCode(data.couponDetails.code);
+        setCouponMessage(data.message);
+      } else {
+        setCouponDiscount(0);
+        setCouponValid(false);
+        setCouponDetailsCode("");
+        setCouponMessage(data.message);
+      }
+    } catch {
+      setCouponMessage("Failed to validate coupon");
+    }
+
+    setApplyingCoupon(false);
+  };
+
+  const handleRemoveCoupon = () => {
+    setCouponCode("");
+    setCouponDiscount(0);
+    setCouponValid(false);
+    setCouponDetailsCode("");
+    setCouponMessage("");
+  };
 
   const handleCheckout = () => {
     if (!user) {
@@ -59,7 +107,7 @@ export default function CartPage() {
                     style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   />
                 ) : (
-                  <span style={{ fontSize: 36 }}>{item.emoji || "👗"}</span>
+                  <span style={{ fontSize: 36 }}>{item.emoji || "---"}</span>
                 )}
               </div>
 
@@ -113,6 +161,88 @@ export default function CartPage() {
         <div style={styles.summaryCard}>
           <h2 style={styles.summaryTitle}>Order Summary</h2>
 
+          {/* Coupon Section */}
+          <div style={{ marginBottom: 16 }}>
+            {couponValid ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "10px 14px",
+                  background: "rgba(46,204,113,0.1)",
+                  border: "1px solid rgba(46,204,113,0.3)",
+                  borderRadius: 8,
+                }}
+              >
+                <div>
+                  <span style={{ color: "#2ecc71", fontSize: 13, fontWeight: 600 }}>
+                    {couponDetailsCode}
+                  </span>
+                  <span style={{ color: "#2ecc71", fontSize: 13, marginLeft: 8 }}>
+                    -{formatPrice(couponDiscount)}
+                  </span>
+                </div>
+                <button
+                  onClick={handleRemoveCoupon}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#ef4444",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="text"
+                  value={couponCode}
+                  onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                  placeholder="Coupon code"
+                  style={{
+                    flex: 1,
+                    padding: "10px 12px",
+                    background: "#1a1a1a",
+                    border: "1px solid #333",
+                    borderRadius: 8,
+                    color: "#fff",
+                    fontSize: 13,
+                    outline: "none",
+                    boxSizing: "border-box" as const,
+                  }}
+                />
+                <button
+                  onClick={handleApplyCoupon}
+                  disabled={applyingCoupon}
+                  style={{
+                    padding: "10px 16px",
+                    background: "transparent",
+                    border: "1px solid #c9a84c",
+                    color: "#c9a84c",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: applyingCoupon ? "not-allowed" : "pointer",
+                    opacity: applyingCoupon ? 0.6 : 1,
+                    whiteSpace: "nowrap" as const,
+                  }}
+                >
+                  {applyingCoupon ? "..." : "Apply"}
+                </button>
+              </div>
+            )}
+            {couponMessage && !couponValid && (
+              <p style={{ color: "#ef4444", fontSize: 12, margin: "6px 0 0" }}>
+                {couponMessage}
+              </p>
+            )}
+          </div>
+
           <div style={styles.summaryRow}>
             <span style={{ color: "#999" }}>Subtotal</span>
             <span style={{ color: "#ededed" }}>{formatPrice(subtotal)}</span>
@@ -135,6 +265,15 @@ export default function CartPage() {
             <span style={{ color: "#999" }}>Tax</span>
             <span style={{ color: "#ededed" }}>{formatPrice(tax)}</span>
           </div>
+
+          {couponDiscount > 0 && (
+            <div style={styles.summaryRow}>
+              <span style={{ color: "#2ecc71" }}>Discount</span>
+              <span style={{ color: "#2ecc71", fontWeight: 600 }}>
+                -{formatPrice(couponDiscount)}
+              </span>
+            </div>
+          )}
 
           <div style={styles.divider} />
 
@@ -333,4 +472,3 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: "none",
   },
 };
-

@@ -9,6 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
 import { isValidPhone, isValidPincode, isValidName } from "@/lib/validation";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { trackEvent } from "@/lib/analytics";
 
 declare global {
   interface Window {
@@ -29,6 +30,13 @@ interface FieldErrors {
   [key: string]: string;
 }
 
+interface CouponDetails {
+  id: number;
+  code: string;
+  type: string;
+  value: number;
+}
+
 function CheckoutContent() {
   const router = useRouter();
   const { items, getCartTotal, clearCart } = useCart();
@@ -47,9 +55,23 @@ function CheckoutContent() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
+  // Coupon state
+  const [couponCode, setCouponCode] = useState("");
+  const [couponDiscount, setCouponDiscount] = useState(0);
+  const [couponMessage, setCouponMessage] = useState("");
+  const [couponValid, setCouponValid] = useState(false);
+  const [couponDetails, setCouponDetails] = useState<CouponDetails | null>(null);
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
+
   const subtotal = getCartTotal();
   const shipping = subtotal >= 5000 ? 0 : 99;
-  const total = subtotal + shipping;
+  const total = subtotal + shipping - couponDiscount;
+
+  // Track begin_checkout on mount
+  useEffect(() => {
+    trackEvent("begin_checkout", "ecommerce", undefined, subtotal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const validateField = useCallback((name: string, value: string): string => {
     switch (name) {
@@ -156,6 +178,46 @@ function CheckoutContent() {
     }
   };
 
+  // Coupon apply
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setApplyingCoupon(true);
+    setCouponMessage("");
+
+    try {
+      const res = await fetch("/api/validate-coupon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: couponCode.trim(), subtotal }),
+      });
+      const data = await res.json();
+
+      if (data.valid) {
+        setCouponDiscount(data.discount);
+        setCouponValid(true);
+        setCouponDetails(data.couponDetails);
+        setCouponMessage(data.message);
+      } else {
+        setCouponDiscount(0);
+        setCouponValid(false);
+        setCouponDetails(null);
+        setCouponMessage(data.message);
+      }
+    } catch {
+      setCouponMessage("Failed to validate coupon");
+    }
+
+    setApplyingCoupon(false);
+  };
+
+  const handleRemoveCoupon = () => {
+    setCouponCode("");
+    setCouponDiscount(0);
+    setCouponValid(false);
+    setCouponDetails(null);
+    setCouponMessage("");
+  };
+
   const handlePlaceOrder = async () => {
     // Validate all
     const fields: (keyof ShippingForm)[] = ["fullName", "phone", "address", "city", "state", "pincode"];
@@ -201,6 +263,8 @@ function CheckoutContent() {
       },
       subtotal,
       shipping,
+      discount: couponDiscount,
+      coupon: couponDetails,
       total,
     };
 
@@ -213,6 +277,7 @@ function CheckoutContent() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to place order");
+        trackEvent("purchase", "ecommerce", "COD", total);
         clearCart();
         router.push(`/order/${data.order_id}`);
       } else {
@@ -253,6 +318,7 @@ function CheckoutContent() {
               });
               const verifyData = await verifyRes.json();
               if (!verifyRes.ok) throw new Error(verifyData.error || "Payment verification failed");
+              trackEvent("purchase", "ecommerce", "Online", total);
               clearCart();
               router.push(`/order/${verifyData.order_id}`);
             } catch (err) {
@@ -469,6 +535,83 @@ function CheckoutContent() {
 
           <div style={styles.divider} />
 
+          {/* Coupon Section */}
+          <div style={{ marginBottom: 16 }}>
+            {couponValid ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "10px 14px",
+                  background: "rgba(46,204,113,0.1)",
+                  border: "1px solid rgba(46,204,113,0.3)",
+                  borderRadius: 8,
+                }}
+              >
+                <div>
+                  <span style={{ color: "#2ecc71", fontSize: 13, fontWeight: 600 }}>
+                    {couponDetails?.code}
+                  </span>
+                  <span style={{ color: "#2ecc71", fontSize: 13, marginLeft: 8 }}>
+                    -  {formatPrice(couponDiscount)}
+                  </span>
+                </div>
+                <button
+                  onClick={handleRemoveCoupon}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#ef4444",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="text"
+                  value={couponCode}
+                  onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                  placeholder="Coupon code"
+                  style={{
+                    ...styles.input,
+                    flex: 1,
+                    padding: "10px 12px",
+                    fontSize: 13,
+                  }}
+                />
+                <button
+                  onClick={handleApplyCoupon}
+                  disabled={applyingCoupon}
+                  style={{
+                    padding: "10px 16px",
+                    background: "transparent",
+                    border: "1px solid #c9a84c",
+                    color: "#c9a84c",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: applyingCoupon ? "not-allowed" : "pointer",
+                    opacity: applyingCoupon ? 0.6 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {applyingCoupon ? "..." : "Apply"}
+                </button>
+              </div>
+            )}
+            {couponMessage && !couponValid && (
+              <p style={{ color: "#ef4444", fontSize: 12, margin: "6px 0 0" }}>
+                {couponMessage}
+              </p>
+            )}
+          </div>
+
           <div style={styles.summaryRow}>
             <span style={{ color: "#999" }}>Subtotal</span>
             <span style={{ color: "#ededed" }}>{formatPrice(subtotal)}</span>
@@ -479,6 +622,14 @@ function CheckoutContent() {
               {shipping === 0 ? "FREE" : formatPrice(shipping)}
             </span>
           </div>
+          {couponDiscount > 0 && (
+            <div style={styles.summaryRow}>
+              <span style={{ color: "#2ecc71" }}>Discount</span>
+              <span style={{ color: "#2ecc71", fontWeight: 600 }}>
+                -{formatPrice(couponDiscount)}
+              </span>
+            </div>
+          )}
           <div style={styles.divider} />
           <div style={styles.summaryRow}>
             <span style={{ color: "#ededed", fontWeight: 700, fontSize: 16 }}>Total</span>

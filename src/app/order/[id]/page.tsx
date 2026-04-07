@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { formatPrice } from "@/lib/utils";
+import { trackEvent } from "@/lib/analytics";
 
 interface OrderItem {
   productId: number;
@@ -184,6 +185,7 @@ export default function OrderPage() {
       setError("Order not found");
     } else {
       setOrder(data as Order);
+      trackEvent("purchase", "ecommerce", data.order_number, data.total);
     }
     setLoading(false);
   }, [orderId]);

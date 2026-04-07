@@ -33,6 +33,7 @@ interface Stats {
   totalCustomers: number;
   pendingOrders: number;
   totalSubscribers: number;
+  totalReviews: number;
 }
 
 // Animated number counter hook
@@ -83,6 +84,7 @@ export default function AdminDashboard() {
     totalCustomers: 0,
     pendingOrders: 0,
     totalSubscribers: 0,
+    totalReviews: 0,
   });
   const [recentOrders, setRecentOrders] = useState<OrderRow[]>([]);
   const [dailyData, setDailyData] = useState<DayData[]>([]);
@@ -99,6 +101,7 @@ export default function AdminDashboard() {
         { count: pendingCount },
         { count: subscriberCount },
         { data: products },
+        { count: reviewCount },
       ] = await Promise.all([
         supabase.from("products").select("*", { count: "exact", head: true }),
         supabase.from("orders").select("*", { count: "exact", head: true }),
@@ -110,6 +113,7 @@ export default function AdminDashboard() {
           .eq("order_status", "Placed"),
         supabase.from("subscribers").select("*", { count: "exact", head: true }),
         supabase.from("products").select("category"),
+        supabase.from("reviews").select("*", { count: "exact", head: true }),
       ]);
 
       const allOrders = orders || [];
@@ -125,6 +129,7 @@ export default function AdminDashboard() {
         totalCustomers: customerCount || 0,
         pendingOrders: pendingCount || 0,
         totalSubscribers: subscriberCount || 0,
+        totalReviews: reviewCount || 0,
       });
 
       setRecentOrders(allOrders.slice(0, 10));
@@ -184,6 +189,7 @@ export default function AdminDashboard() {
     { label: "Total Customers", value: stats.totalCustomers, icon: "👥", isPrice: false },
     { label: "Pending Orders", value: stats.pendingOrders, icon: "⏳", isPrice: false },
     { label: "Subscribers", value: stats.totalSubscribers, icon: "📧", isPrice: false },
+    { label: "Reviews", value: stats.totalReviews, icon: "⭐", isPrice: false },
   ];
 
   const statusColor: Record<string, string> = {
