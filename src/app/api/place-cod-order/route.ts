@@ -141,7 +141,9 @@ export async function POST(request: Request) {
     const orderNumber = generateOrderNumber();
     const fullAddress = `${address}, ${city}, ${state} - ${pincode}`;
 
-    const { data, error } = await supabaseAdmin
+    // Use admin client if service key available, otherwise anon
+    const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? supabaseAdmin : supabase;
+    const { data, error } = await client
       .from("orders")
       .insert({
         order_number: orderNumber,
